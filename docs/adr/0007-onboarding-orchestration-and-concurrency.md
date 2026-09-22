@@ -23,17 +23,23 @@ infrastructure. Execute model, tool, and database I/O asynchronously.
 
 HR first establishes sufficient validated employee facts. IT, Compliance, and
 Payroll then assess requirements concurrently. Separate assessment from action
-within these specialists: assessment returns structured proposals; action executes
-only work that has passed dependency validation. These are phases of the same
-specialist, not additional agents.
+within the parent workflow: specialist subgraphs return structured proposals, and
+the parent executes only work that has passed dependency validation through the
+shared operation executor. This keeps action execution deterministic and avoids
+duplicating idempotency logic in every specialist. A future specialist may add a
+private action subgraph behind the same result seam if its domain needs one; it is
+not required for the assignment slice.
 
 The initial assessment has a synchronization barrier. Merge findings and validate
 cross-agent dependencies before dispatching writes. An unavailable assessment is
 not evidence that there are no requirements; affected actions remain ineligible.
 
-Dispatch eligible independent actions in bounded concurrent batches. Merge their
-outcomes, recompute readiness, and repeat while additional work is runnable. The
-graph structure stays stable while requirements and eligible work change.
+Dispatch eligible independent operations in bounded concurrent batches. The async
+parent owns the batch with `asyncio.gather`; synchronous mock adapters are run
+off the event loop, and the operation executor serializes only calls sharing the
+same logical operation key. Merge outcomes, recompute readiness, and repeat while
+additional work is runnable. The graph structure stays stable while requirements
+and eligible work change.
 
 ```mermaid
 flowchart TD
@@ -46,7 +52,7 @@ flowchart TD
     E --> G
     F --> G
     G --> H{Eligible work?}
-    H -->|Yes| I[Concurrent specialist action batch]
+    H -->|Yes| I[Concurrent validated operation batch]
     I --> J[Merge outcomes and recompute readiness]
     J --> H
     C -->|No| K[Consolidate status]
@@ -67,8 +73,8 @@ specialist validation, not simply copying supplied claims into readiness state.
 
 - Independent lookups may overlap when neither needs the other's result.
 - IT, Compliance, and Payroll assessments run concurrently after HR validation.
-- Independent eligible actions, such as laptop requests, compliance-case creation,
-  and payroll setup, may run concurrently.
+- Independent eligible operations, such as laptop requests, compliance-case
+  creation, and payroll setup, run concurrently from the parent action batch.
 - Prerequisite verification precedes dependent actions such as AWS provisioning.
 - Consolidation and notification preparation follow the current work batch.
 - Competing executions/resumptions of the same onboarding are serialized.
