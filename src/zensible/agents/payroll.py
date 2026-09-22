@@ -8,7 +8,6 @@ from zensible.domain.contracts import (
     AgentName,
     MissingInput,
     PayrollAssessment,
-    ResumeEventKind,
     SpecialistOutcome,
     SpecialistPhase,
     SpecialistResult,
@@ -17,6 +16,57 @@ from zensible.domain.contracts import (
 )
 from zensible.modeling import StructuredAgentModel
 from zensible.observability import EventSink, trace_operation
+
+
+def _bank_reference(context) -> str | None:
+    event = context.resume_event
+    if event is None:
+        return None
+    reference = event.payload.get("bank_details_reference")
+    return reference if isinstance(reference, str) and reference else None
+
+
+def _assessment(context, bank_reference: str | None) -> PayrollAssessment:
+    return PayrollAssessment(
+        compensation_reference="comp_123",
+        bank_details_reference=bank_reference,
+        salary="150000.00",
+        currency="INR",
+        pay_schedule="monthly",
+        effective_date=(
+            context.resume_event.submitted_at.date()
+            if context.resume_event is not None
+            else None
+        ),
+        eligible=bank_reference is not None,
+    )
+
+
+def _missing_inputs(eligible: bool) -> list[MissingInput]:
+    if eligible:
+        return []
+    return [
+        MissingInput(
+            field="bank_details_reference",
+            reason="Verified bank details are required before payroll setup",
+            requested_from="employee",
+        )
+    ]
+
+
+def _proposed_tasks(context, state_revision: int, eligible: bool) -> list[TaskProposal]:
+    if not eligible:
+        return []
+    return [
+        TaskProposal(
+            task_id=f"{context.onboarding_id}:payroll:setup",
+            owner_agent=AgentName.PAYROLL,
+            intent=TaskIntent.SUBMIT_PAYROLL_SETUP,
+            goal="submit payroll setup request",
+            source_revision=state_revision,
+            operation_key=f"{context.onboarding_id}:payroll:setup",
+        )
+    ]
 
 
 @trace_operation("payroll.assess", tags=("onboarding", "payroll"))
@@ -31,65 +81,16 @@ async def assess(
         agent=AgentName.PAYROLL,
         context=context.model_dump(mode="json"),
     )
-    bank_reference = None
-    if (
-        context.resume_event is not None
-        and context.resume_event.kind is ResumeEventKind.BANK_DETAILS_SUBMITTED
-    ):
-        bank_reference = context.resume_event.payload.get("bank_details_reference")
-    if context.resume_event is not None and context.resume_event.payload.get(
-        "bank_details_reference"
-    ):
-        bank_reference = context.resume_event.payload["bank_details_reference"]
-
-    eligible = isinstance(bank_reference, str) and bool(bank_reference)
-    assessment = PayrollAssessment(
-        compensation_reference="comp_123",
-        bank_details_reference=bank_reference
-        if isinstance(bank_reference, str)
-        else None,
-        salary="150000.00",
-        currency="INR",
-        pay_schedule="monthly",
-        effective_date=context.resume_event.submitted_at.date()
-        if context.resume_event is not None
-        else None,
-        eligible=eligible,
-    )
-    missing_inputs = (
-        []
-        if eligible
-        else [
-            MissingInput(
-                field="bank_details_reference",
-                reason="Verified bank details are required before payroll setup",
-                requested_from="employee",
-            )
-        ]
-    )
-    proposed_tasks = (
-        []
-        if not eligible
-        else [
-            TaskProposal(
-                task_id=f"{context.onboarding_id}:payroll:setup",
-                owner_agent=AgentName.PAYROLL,
-                intent=TaskIntent.SUBMIT_PAYROLL_SETUP,
-                goal="submit payroll setup request",
-                source_revision=state_revision,
-                required_requirements=[],
-                operation_key=f"{context.onboarding_id}:payroll:setup",
-            )
-        ]
-    )
+    bank_reference = _bank_reference(context)
+    eligible = bank_reference is not None
     return SpecialistResult(
         agent=AgentName.PAYROLL,
         phase=SpecialistPhase.ASSESSMENT,
         outcome=SpecialistOutcome.COMPLETED,
         state_revision=state_revision,
-        payload=assessment,
-        missing_inputs=missing_inputs,
-        proposed_tasks=proposed_tasks,
+        payload=_assessment(context, bank_reference),
+        missing_inputs=_missing_inputs(eligible),
+        proposed_tasks=_proposed_tasks(context, state_revision, eligible),
         model_output=model_output,
     )
 
