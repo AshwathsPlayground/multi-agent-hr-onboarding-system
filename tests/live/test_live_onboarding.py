@@ -1,4 +1,3 @@
-import asyncio
 from datetime import date
 
 import pytest
@@ -11,10 +10,10 @@ from zensible.orchestration.graph import build_onboarding_graph
 from zensible.simulation import SimulatedCompany
 from zensible.tools import OperationExecutor
 
-pytestmark = pytest.mark.live
+pytestmark = [pytest.mark.live, pytest.mark.asyncio(loop_scope="session")]
 
 
-def test_live_model_runs_all_specialists_with_simulated_tools() -> None:
+async def test_live_model_runs_all_specialists_with_simulated_tools() -> None:
     settings = Settings()
     if settings.cliproxy_api_key is None:
         pytest.fail("CLIPROXY_API_KEY is required for the live onboarding test")
@@ -36,7 +35,7 @@ def test_live_model_runs_all_specialists_with_simulated_tools() -> None:
         requested_by="hr_user_42",
     )
 
-    state = asyncio.run(graph.ainvoke({"request": request}))
+    state = await graph.ainvoke({"request": request})
 
     print(render_events(events.events))
 

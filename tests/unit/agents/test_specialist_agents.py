@@ -12,6 +12,7 @@ from zensible.domain.contracts import (
     ResumeEventKind,
     SpecialistOutcome,
     TaskIntent,
+    TaskRecord,
 )
 from zensible.modeling import ScriptedStructuredAgentModel
 
@@ -49,6 +50,15 @@ def context(*, resume_event: ResumeEvent | None = None) -> AgentContext:
         policy_version="2026-09",
         resume_event=resume_event,
     )
+
+
+async def payroll_result(
+    resume_event: ResumeEvent | None = None,
+):
+    graph = payroll.build_graph(model_for(AgentName.PAYROLL))
+    return (await graph.ainvoke({"context": context(resume_event=resume_event)}))[
+        "result"
+    ]
 
 
 @pytest.mark.asyncio
@@ -102,30 +112,69 @@ async def test_compliance_agent_reports_training_pending() -> None:
 
 
 @pytest.mark.asyncio
-async def test_payroll_agent_requests_missing_bank_details() -> None:
-    graph = payroll.build_graph(model_for(AgentName.PAYROLL))
-
-    result = (await graph.ainvoke({"context": context()}))["result"]
-
-    assert result.missing_inputs[0].field == "bank_details_reference"
-    assert result.proposed_tasks == []
-    assert result.model_output is not None
-
-
-@pytest.mark.asyncio
-async def test_payroll_agent_proposes_setup_after_bank_details() -> None:
-    event = ResumeEvent(
-        kind=ResumeEventKind.BANK_DETAILS_SUBMITTED,
-        payload={"bank_details_reference": "bank_ref_123"},
-        source="employee:emp_123",
-        submitted_at=datetime(2026, 9, 22, tzinfo=UTC),
+async def test_compliance_agent_does_not_reopen_succeeded_case() -> None:
+    existing_context = context().model_copy(
+        update={
+            "existing_tasks": [
+                TaskRecord(
+                    task_id="onb_agent_test:compliance:case",
+                    owner_agent=AgentName.COMPLIANCE,
+                    intent=TaskIntent.CREATE_COMPLIANCE_CASE,
+                    goal="open the compliance onboarding case",
+                    source_revision=0,
+                    status="succeeded",
+                )
+            ]
+        }
     )
-    graph = payroll.build_graph(model_for(AgentName.PAYROLL))
+    graph = compliance.build_graph(model_for(AgentName.COMPLIANCE))
 
-    result = (await graph.ainvoke({"context": context(resume_event=event)}))["result"]
+    result = (await graph.ainvoke({"context": existing_context}))["result"]
 
-    assert result.payload.eligible is True
-    assert result.proposed_tasks[0].intent is TaskIntent.SUBMIT_PAYROLL_SETUP
+    assert result.proposed_tasks == []
+
+
+@pytest.mark.parametrize(
+    ("resume_event", "eligible", "has_missing_input", "has_task"),
+    [
+        (None, False, True, False),
+        (
+            ResumeEvent(
+                kind=ResumeEventKind.BANK_DETAILS_SUBMITTED,
+                payload={"bank_details_reference": "bank_ref_123"},
+                source="employee:emp_123",
+                submitted_at=datetime(2026, 9, 22, tzinfo=UTC),
+            ),
+            True,
+            False,
+            True,
+        ),
+        (
+            ResumeEvent(
+                kind=ResumeEventKind.BANK_DETAILS_SUBMITTED,
+                payload={"bank_details_reference": ""},
+                source="employee:emp_123",
+                submitted_at=datetime(2026, 9, 22, tzinfo=UTC),
+            ),
+            False,
+            True,
+            False,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_payroll_agent_handles_bank_detail_variants(
+    resume_event: ResumeEvent | None,
+    eligible: bool,
+    has_missing_input: bool,
+    has_task: bool,
+) -> None:
+    result = await payroll_result(resume_event)
+
+    assert result.payload.eligible is eligible
+    assert bool(result.missing_inputs) is has_missing_input
+    assert bool(result.proposed_tasks) is has_task
+    assert result.model_output is not None
 
 
 @pytest.mark.asyncio

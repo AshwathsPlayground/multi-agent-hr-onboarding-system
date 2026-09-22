@@ -280,7 +280,7 @@ async def _communicate(
 ) -> dict[str, Any]:
     result = (await graph.ainvoke({"context": state["context"]}))["result"]
     request = OperationRequest(
-        operation_key=f"{state['context'].onboarding_id}:notification:{state['context'].state_revision}:{state['status'].value}",
+        operation_key=f"{state['context'].onboarding_id}:notification:{state['status'].value}",
         task_id=f"{state['context'].onboarding_id}:notification",
         operation_type="deliver_notification",
         payload={

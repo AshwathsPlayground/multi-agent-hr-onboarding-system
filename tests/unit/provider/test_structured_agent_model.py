@@ -75,6 +75,52 @@ async def test_scripted_model_rejects_unknown_agent() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_scripted_model_reuses_last_response_after_sequence() -> None:
+    model = ScriptedStructuredAgentModel(
+        {
+            "hr": [
+                {"message": "first response", "confidence": 0.7},
+                {"message": "second response", "confidence": 0.8},
+            ]
+        }
+    )
+    await model.ainvoke(
+        agent_name="hr",
+        system_prompt="system",
+        user_input="first input",
+        response_model=Greeting,
+    )
+    await model.ainvoke(
+        agent_name="hr",
+        system_prompt="system",
+        user_input="second input",
+        response_model=Greeting,
+    )
+
+    third = await model.ainvoke(
+        agent_name="hr",
+        system_prompt="system",
+        user_input="third input",
+        response_model=Greeting,
+    )
+
+    assert third.message == "second response"
+
+
+@pytest.mark.asyncio
+async def test_scripted_model_rejects_invalid_structured_response() -> None:
+    model = ScriptedStructuredAgentModel({"hr": {"message": "missing confidence"}})
+
+    with pytest.raises(ValueError):
+        await model.ainvoke(
+            agent_name="hr",
+            system_prompt="system",
+            user_input="input",
+            response_model=Greeting,
+        )
+
+
 class _FakeStructuredRunnable:
     def __init__(self, response: Mapping[str, object]) -> None:
         self.response = response
