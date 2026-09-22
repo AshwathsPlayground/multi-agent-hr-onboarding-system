@@ -163,12 +163,13 @@ def _plan_tasks(state: OnboardingState) -> dict[str, Any]:
             existing_by_id.get(proposal.task_id),
             results,
         )
-    errors = [
+    errors = [*plan_errors]
+    errors.extend(error for result in results.values() for error in result.errors)
+    errors.extend(
         ErrorDetail(code="missing_input", message=missing.reason)
         for result in results.values()
         for missing in result.missing_inputs
-    ]
-    errors = [*plan_errors, *errors]
+    )
     errors.extend(
         ErrorDetail(code="conflict", message=conflict.field)
         for result in results.values()
@@ -251,12 +252,18 @@ async def _execute_actions(
 
 def _classify(state: OnboardingState) -> dict[str, Any]:
     hr_result = state["assessment_results"].get("hr")
-    if any(error.code == "invalid_plan" for error in state.get("errors", [])):
+    if any(
+        error.code in {"invalid_plan", "invalid_model_output"}
+        for error in state.get("errors", [])
+    ):
         status = OnboardingStatus.INVALID_PLAN
     elif (
         hr_result is not None
         and hr_result.outcome is SpecialistOutcome.NEEDS_RESOLUTION
-        or any(error.code == "conflict" for error in state.get("errors", []))
+        or any(
+            error.code in {"conflict", "model_escalation"}
+            for error in state.get("errors", [])
+        )
     ):
         status = OnboardingStatus.NEEDS_RESOLUTION
     elif hr_result is not None and hr_result.outcome is SpecialistOutcome.NEEDS_INPUT:

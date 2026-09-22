@@ -5,8 +5,11 @@ import pytest
 from zensible.agents import communication, compliance, hr, it, payroll
 from zensible.domain.contracts import (
     AgentContext,
+    AgentDecision,
     AgentName,
     DeliveryStatus,
+    MissingInput,
+    ModelAssessment,
     OnboardingRequest,
     ResumeEvent,
     ResumeEventKind,
@@ -98,6 +101,85 @@ async def test_it_agent_proposes_gated_and_independent_work() -> None:
         TaskIntent.SUBMIT_IT_REQUEST
     }
     assert any(task.required_requirements for task in result.proposed_tasks)
+
+
+@pytest.mark.asyncio
+async def test_it_agent_uses_model_task_selection_within_policy_candidates() -> None:
+    model = ScriptedStructuredAgentModel(
+        {
+            AgentName.IT.value: ModelAssessment(
+                summary="laptop is ready to request",
+                recommendation="request the laptop only",
+                confidence=0.95,
+                decision=AgentDecision.PROCEED,
+                approved_task_ids=["onb_agent_test:it:laptop"],
+            )
+        }
+    )
+    graph = it.build_graph(model)
+
+    result = (await graph.ainvoke({"context": context()}))["result"]
+
+    assert [task.task_id for task in result.proposed_tasks] == [
+        "onb_agent_test:it:laptop"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_payroll_model_request_for_input_suppresses_ready_task() -> None:
+    resume_event = ResumeEvent(
+        kind=ResumeEventKind.BANK_DETAILS_SUBMITTED,
+        payload={"bank_details_reference": "bank_ref_123"},
+        source="employee:emp_123",
+        submitted_at=datetime(2026, 9, 22, tzinfo=UTC),
+    )
+    model = ScriptedStructuredAgentModel(
+        {
+            AgentName.PAYROLL.value: ModelAssessment(
+                summary="payroll needs one more verification",
+                recommendation="request payroll confirmation",
+                confidence=0.9,
+                decision=AgentDecision.REQUEST_INPUT,
+                requested_inputs=[
+                    MissingInput(
+                        field="payroll_confirmation",
+                        reason="Payroll confirmation is required",
+                        requested_from="payroll",
+                    )
+                ],
+            )
+        }
+    )
+    graph = payroll.build_graph(model)
+
+    result = (await graph.ainvoke({"context": context(resume_event=resume_event)}))[
+        "result"
+    ]
+
+    assert result.outcome is SpecialistOutcome.NEEDS_INPUT
+    assert result.proposed_tasks == []
+    assert result.missing_inputs[0].field == "payroll_confirmation"
+
+
+@pytest.mark.asyncio
+async def test_invalid_model_task_selection_is_rejected_before_planning() -> None:
+    model = ScriptedStructuredAgentModel(
+        {
+            AgentName.IT.value: ModelAssessment(
+                summary="invalid selection",
+                recommendation="request an unsupported resource",
+                confidence=0.7,
+                approved_task_ids=["onb_agent_test:it:forged"],
+            )
+        }
+    )
+    graph = it.build_graph(model)
+
+    result = (await graph.ainvoke({"context": context()}))["result"]
+
+    assert result.outcome is SpecialistOutcome.NEEDS_RESOLUTION
+    assert result.proposed_tasks == []
+    assert result.errors[0].code == "invalid_model_output"
 
 
 @pytest.mark.asyncio

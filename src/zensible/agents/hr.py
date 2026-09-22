@@ -2,7 +2,11 @@
 
 from langgraph.graph import END, StateGraph
 
-from zensible.agents.runtime import model_assessment, record_result
+from zensible.agents.runtime import (
+    apply_model_guidance,
+    model_assessment,
+    record_result,
+)
 from zensible.agents.state import SpecialistState
 from zensible.domain.contracts import (
     AgentName,
@@ -28,13 +32,9 @@ async def assess(
 ) -> SpecialistResult[ValidatedEmployeeFacts]:
     """Validate the employee fixture without changing HR source data."""
 
-    model_output = await model_assessment(
-        model,
-        agent=AgentName.HR,
-        context=request.model_dump(mode="json"),
-    )
-
-    if request.employee_reference.lower() == "john smith":
+    employee_reference = request.employee_reference.lower()
+    facts = None
+    if employee_reference == "john smith":
         facts = ValidatedEmployeeFacts(
             employee_id="emp_123",
             name="John Smith",
@@ -45,45 +45,79 @@ async def assess(
             department="engineering",
             provenance={"employee_id": []},
         )
-        return SpecialistResult(
-            agent=AgentName.HR,
-            phase=SpecialistPhase.ASSESSMENT,
-            outcome=SpecialistOutcome.COMPLETED,
-            state_revision=state_revision,
-            payload=facts,
-            findings=[
-                Finding(code="hr_facts_validated", message="HR facts are complete")
-            ],
+
+    model_context = request.model_dump(mode="json")
+    if facts is not None:
+        model_context["deterministic_validation"] = {
+            "outcome": SpecialistOutcome.COMPLETED.value,
+            "validated_facts": facts.model_dump(mode="json"),
+        }
+    elif "ambiguous" in employee_reference:
+        model_context["deterministic_validation"] = {
+            "outcome": SpecialistOutcome.NEEDS_RESOLUTION.value,
+            "conflict": "employee_reference matched multiple candidates",
+        }
+    else:
+        model_context["deterministic_validation"] = {
+            "outcome": SpecialistOutcome.NEEDS_INPUT.value,
+            "missing_input": "employee_reference",
+        }
+
+    model_output = await model_assessment(
+        model,
+        agent=AgentName.HR,
+        context=model_context,
+    )
+
+    if facts is not None:
+        return apply_model_guidance(
+            SpecialistResult(
+                agent=AgentName.HR,
+                phase=SpecialistPhase.ASSESSMENT,
+                outcome=SpecialistOutcome.COMPLETED,
+                state_revision=state_revision,
+                payload=facts,
+                findings=[
+                    Finding(code="hr_facts_validated", message="HR facts are complete")
+                ],
+                model_output=model_output,
+            ),
             model_output=model_output,
         )
 
     if "ambiguous" in request.employee_reference.lower():
-        return SpecialistResult(
-            agent=AgentName.HR,
-            phase=SpecialistPhase.ASSESSMENT,
-            outcome=SpecialistOutcome.NEEDS_RESOLUTION,
-            state_revision=state_revision,
-            conflicts=[
-                Conflict(
-                    field="employee_reference",
-                    values={"candidate_1": "emp_123", "candidate_2": "emp_987"},
-                )
-            ],
+        return apply_model_guidance(
+            SpecialistResult(
+                agent=AgentName.HR,
+                phase=SpecialistPhase.ASSESSMENT,
+                outcome=SpecialistOutcome.NEEDS_RESOLUTION,
+                state_revision=state_revision,
+                conflicts=[
+                    Conflict(
+                        field="employee_reference",
+                        values={"candidate_1": "emp_123", "candidate_2": "emp_987"},
+                    )
+                ],
+                model_output=model_output,
+            ),
             model_output=model_output,
         )
 
-    return SpecialistResult(
-        agent=AgentName.HR,
-        phase=SpecialistPhase.ASSESSMENT,
-        outcome=SpecialistOutcome.NEEDS_INPUT,
-        state_revision=state_revision,
-        missing_inputs=[
-            MissingInput(
-                field="employee_reference",
-                reason="No employee matched the supplied reference",
-                requested_from="hr",
-            )
-        ],
+    return apply_model_guidance(
+        SpecialistResult(
+            agent=AgentName.HR,
+            phase=SpecialistPhase.ASSESSMENT,
+            outcome=SpecialistOutcome.NEEDS_INPUT,
+            state_revision=state_revision,
+            missing_inputs=[
+                MissingInput(
+                    field="employee_reference",
+                    reason="No employee matched the supplied reference",
+                    requested_from="hr",
+                )
+            ],
+            model_output=model_output,
+        ),
         model_output=model_output,
     )
 

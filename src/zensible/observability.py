@@ -289,12 +289,28 @@ def _format_model_request(event: ExecutionEvent) -> str:
 def _format_model_response(event: ExecutionEvent) -> str:
     output = _mapping(event.payload.get("output"))
     evidence = output.get("evidence", [])
+    approved_tasks = output.get("approved_task_ids")
+    requested_inputs = _mappings(output.get("requested_inputs"))
+    escalations = output.get("escalation_reasons", [])
     lines = [
         f"[MODEL RESPONSE] {event.name} provider={event.payload.get('provider', 'unknown')}",
         f"  Summary: {output.get('summary', 'n/a')}",
         f"  Recommendation: {output.get('recommendation', 'n/a')}",
         f"  Confidence: {output.get('confidence', 'n/a')}",
+        f"  Decision: {output.get('decision', 'n/a')}",
     ]
+    if approved_tasks is not None:
+        lines.append(f"  Approved tasks: {_join_values(approved_tasks)}")
+    if requested_inputs:
+        lines.append(
+            "  Requested inputs: "
+            + "; ".join(
+                f"{item.get('field', 'n/a')} — {item.get('reason', 'n/a')}"
+                for item in requested_inputs
+            )
+        )
+    if escalations:
+        lines.append(f"  Escalation reasons: {_join_values(escalations)}")
     return "\n".join(
         lines + [f"  Evidence: {_join_values(evidence)}"] if evidence else lines
     )
@@ -303,16 +319,32 @@ def _format_model_response(event: ExecutionEvent) -> str:
 def _format_agent_result(event: ExecutionEvent) -> str:
     result = _mapping(event.payload.get("result"))
     model_output = _mapping(result.get("model_output"))
-    model_lines = (
-        [
+    model_lines: list[str] = []
+    if model_output:
+        model_lines = [
             (
                 f"  Model: {model_output.get('summary', 'n/a')} "
                 f"(confidence={model_output.get('confidence', 'n/a')})"
-            )
+            ),
+            f"  Decision: {model_output.get('decision', 'n/a')}",
         ]
-        if model_output
-        else []
-    )
+        if model_output.get("approved_task_ids") is not None:
+            model_lines.append(
+                "  Approved tasks: "
+                + _join_values(model_output.get("approved_task_ids"))
+            )
+        requested_inputs = _mappings(model_output.get("requested_inputs"))
+        if requested_inputs:
+            model_lines.append(
+                "  Requested inputs: "
+                + "; ".join(
+                    f"{item.get('field', 'n/a')} — {item.get('reason', 'n/a')}"
+                    for item in requested_inputs
+                )
+            )
+        escalations = model_output.get("escalation_reasons", [])
+        if escalations:
+            model_lines.append(f"  Escalation reasons: {_join_values(escalations)}")
     header = (
         f"[AGENT RESULT] {event.name} outcome={result.get('outcome', 'n/a')} "
         f"phase={result.get('phase', 'n/a')} revision={result.get('state_revision', 'n/a')}"

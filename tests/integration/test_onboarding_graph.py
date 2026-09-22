@@ -4,6 +4,9 @@ from datetime import UTC, date, datetime
 import pytest
 
 from zensible.domain.contracts import (
+    AgentDecision,
+    AgentName,
+    ModelAssessment,
     OnboardingRequest,
     OnboardingStatus,
     OperationStatus,
@@ -11,6 +14,7 @@ from zensible.domain.contracts import (
     ResumeEventKind,
     TaskStatus,
 )
+from zensible.modeling import ScriptedStructuredAgentModel
 from zensible.orchestration.graph import build_onboarding_graph
 from zensible.simulation import FailureMode, SimulatedCompany
 from zensible.tools import OperationExecutor
@@ -120,3 +124,65 @@ def test_notification_status_reflects_delivery_failure() -> None:
     state = asyncio.run(graph.ainvoke({"request": john_request()}))
 
     assert state["notifications"][0].payload.status.value == "failed"
+
+
+def test_model_escalation_changes_parent_status_and_suppresses_agent_action() -> None:
+    company = SimulatedCompany()
+    responses = {
+        agent.value: ModelAssessment(
+            summary=f"{agent.value} reviewed",
+            recommendation="continue",
+            confidence=0.9,
+        )
+        for agent in AgentName
+    }
+    responses[AgentName.COMPLIANCE.value] = ModelAssessment(
+        summary="compliance requires human review",
+        recommendation="escalate before opening a case",
+        confidence=0.95,
+        decision=AgentDecision.ESCALATE,
+        escalation_reasons=["policy evidence requires human review"],
+    )
+    model = ScriptedStructuredAgentModel(responses)
+    graph = build_onboarding_graph(
+        executor=OperationExecutor(company),
+        agent_model=model,
+    )
+
+    state = asyncio.run(graph.ainvoke({"request": john_request()}))
+
+    assert state["status"] is OnboardingStatus.NEEDS_RESOLUTION
+    assert company.effect_count("create_compliance_case") == 0
+    assert any(error.code == "model_escalation" for error in state["errors"])
+
+
+def test_model_task_selection_controls_parent_action_batch() -> None:
+    company = SimulatedCompany()
+    responses = {
+        agent.value: ModelAssessment(
+            summary=f"{agent.value} reviewed",
+            recommendation="continue",
+            confidence=0.9,
+        )
+        for agent in AgentName
+    }
+    responses[AgentName.IT.value] = ModelAssessment(
+        summary="laptop is approved and AWS remains deferred",
+        recommendation="request the laptop only",
+        confidence=0.95,
+        decision=AgentDecision.PROCEED,
+        approved_task_ids=["onb_123:it:laptop"],
+    )
+    graph = build_onboarding_graph(
+        executor=OperationExecutor(company),
+        agent_model=ScriptedStructuredAgentModel(responses),
+    )
+
+    state = asyncio.run(graph.ainvoke({"request": john_request()}))
+
+    assert company.effect_count("submit_it_request") == 1
+    assert {
+        task.task_id
+        for task in state["tasks"]
+        if task.intent.value == "submit_it_request"
+    } == {"onb_123:it:laptop"}

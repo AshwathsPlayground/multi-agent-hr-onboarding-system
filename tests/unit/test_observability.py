@@ -106,6 +106,13 @@ def test_human_event_format_summarizes_context_and_keeps_agent_output_visible() 
                 "model_output": {
                     "summary": "model assessed payroll readiness",
                     "confidence": 0.92,
+                    "decision": "request_input",
+                    "requested_inputs": [
+                        {
+                            "field": "payroll_confirmation",
+                            "reason": "required",
+                        }
+                    ],
                 },
                 "missing_inputs": [
                     {"field": "bank_details_reference", "reason": "required"}
@@ -121,5 +128,7 @@ def test_human_event_format_summarizes_context_and_keeps_agent_output_visible() 
     assert "onboarding_id=onb_123" in rendered
     assert "employee_id=emp_123" in rendered
     assert "model assessed payroll readiness" in rendered
+    assert "Decision: request_input" in rendered
+    assert "Requested inputs: payroll_confirmation — required" in rendered
     assert "Missing input: bank_details_reference — required" in rendered
     assert "validated_hr_facts" not in rendered

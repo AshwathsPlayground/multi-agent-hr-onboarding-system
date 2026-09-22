@@ -2,7 +2,11 @@
 
 from langgraph.graph import END, StateGraph
 
-from zensible.agents.runtime import model_assessment, record_result
+from zensible.agents.runtime import (
+    apply_model_guidance,
+    model_assessment,
+    record_result,
+)
 from zensible.agents.state import SpecialistState
 from zensible.domain.contracts import (
     AgentName,
@@ -28,14 +32,20 @@ async def assess(
         agent=AgentName.COMMUNICATION,
         context=context.model_dump(mode="json"),
     )
-    return SpecialistResult(
-        agent=AgentName.COMMUNICATION,
-        phase=SpecialistPhase.ASSESSMENT,
-        outcome=SpecialistOutcome.COMPLETED,
-        state_revision=state_revision,
-        payload=DeliveryResult(
-            status=DeliveryStatus.PENDING,
-            recipient_references=[f"hr:{context.onboarding_id}", "employee:emp_123"],
+    return apply_model_guidance(
+        SpecialistResult(
+            agent=AgentName.COMMUNICATION,
+            phase=SpecialistPhase.ASSESSMENT,
+            outcome=SpecialistOutcome.COMPLETED,
+            state_revision=state_revision,
+            payload=DeliveryResult(
+                status=DeliveryStatus.PENDING,
+                recipient_references=[
+                    f"hr:{context.onboarding_id}",
+                    "employee:emp_123",
+                ],
+            ),
+            model_output=model_output,
         ),
         model_output=model_output,
     )

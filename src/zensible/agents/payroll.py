@@ -2,7 +2,11 @@
 
 from langgraph.graph import END, StateGraph
 
-from zensible.agents.runtime import model_assessment, record_result
+from zensible.agents.runtime import (
+    apply_model_guidance,
+    model_assessment,
+    record_result,
+)
 from zensible.agents.state import SpecialistState
 from zensible.domain.contracts import (
     AgentName,
@@ -76,22 +80,41 @@ async def assess(
     state_revision: int,
     model: StructuredAgentModel | None = None,
 ) -> SpecialistResult[PayrollAssessment]:
+    bank_reference = _bank_reference(context)
+    eligible = bank_reference is not None
+    task_id = f"{context.onboarding_id}:payroll:setup"
+    payroll_assessment = _assessment(context, bank_reference)
+    deterministic_missing_inputs = _missing_inputs(eligible)
+    model_context = context.model_dump(mode="json")
+    model_context["deterministic_payroll_assessment"] = payroll_assessment.model_dump(
+        mode="json"
+    )
+    model_context["deterministic_missing_inputs"] = [
+        item.model_dump(mode="json") for item in deterministic_missing_inputs
+    ]
+    model_context["candidate_task"] = {
+        "task_id": task_id,
+        "goal": "submit payroll setup request",
+    }
     model_output = await model_assessment(
         model,
         agent=AgentName.PAYROLL,
-        context=context.model_dump(mode="json"),
+        context=model_context,
+        candidate_task_ids=[task_id],
     )
-    bank_reference = _bank_reference(context)
-    eligible = bank_reference is not None
-    return SpecialistResult(
-        agent=AgentName.PAYROLL,
-        phase=SpecialistPhase.ASSESSMENT,
-        outcome=SpecialistOutcome.COMPLETED,
-        state_revision=state_revision,
-        payload=_assessment(context, bank_reference),
-        missing_inputs=_missing_inputs(eligible),
-        proposed_tasks=_proposed_tasks(context, state_revision, eligible),
+    return apply_model_guidance(
+        SpecialistResult(
+            agent=AgentName.PAYROLL,
+            phase=SpecialistPhase.ASSESSMENT,
+            outcome=SpecialistOutcome.COMPLETED,
+            state_revision=state_revision,
+            payload=payroll_assessment,
+            missing_inputs=deterministic_missing_inputs,
+            proposed_tasks=_proposed_tasks(context, state_revision, eligible),
+            model_output=model_output,
+        ),
         model_output=model_output,
+        candidate_task_ids=[task_id],
     )
 
 

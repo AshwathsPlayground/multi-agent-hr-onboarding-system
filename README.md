@@ -13,6 +13,10 @@ The enterprise systems are deterministic simulated tools. The model provider is
 switchable, so the same graph can run offline or against the configured live
 CLIProxyAPI model.
 
+Models return bounded specialist guidance: proceed, request input, escalate, or
+approve a subset of candidate tasks. The parent graph validates that guidance
+before it permits any dependency-checked side effect.
+
 ## Setup
 
 Requirements: Python 3.12, `uv`, and Docker.

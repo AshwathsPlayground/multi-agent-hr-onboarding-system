@@ -45,7 +45,8 @@ tool event, and then opt into a live provider run without changing graph code. T
 scripted adapter makes failure and resume scenarios deterministic. The live suite is
 slower and can vary in wording, so it is opt-in and invariant-based.
 
-The current model output is an observable structured assessment. Deterministic domain
-rules still produce the authoritative task proposals for this assignment slice. A
-future production integration may allow model outputs to contribute more directly to
-domain decisions, but it must preserve typed validation and the executor safety seam.
+The current model output is an observable structured assessment with bounded guidance
+for proceed, input requests, escalation, and optional candidate-task selection.
+Deterministic domain rules still produce the candidate tasks and remain authoritative
+for prerequisites, validation, and side effects. ADR-0011 records how model guidance
+is applied without allowing arbitrary model-generated writes.

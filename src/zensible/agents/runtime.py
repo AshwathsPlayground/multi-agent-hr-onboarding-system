@@ -1,9 +1,18 @@
 """Shared runtime helper for observable specialist model calls."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from typing import Any
 
-from zensible.domain.contracts import AgentName, ModelAssessment
+from zensible.domain.contracts import (
+    AgentDecision,
+    AgentName,
+    ErrorDetail,
+    MissingInput,
+    ModelAssessment,
+    SpecialistOutcome,
+    SpecialistResult,
+)
 from zensible.modeling import StructuredAgentModel
 from zensible.observability import EventSink
 
@@ -13,19 +22,109 @@ async def model_assessment(
     *,
     agent: AgentName,
     context: Mapping[str, object],
+    candidate_task_ids: Sequence[str] = (),
 ) -> ModelAssessment | None:
-    """Ask the injected provider for a validated advisory assessment."""
+    """Ask the injected provider for validated, bounded agent guidance."""
 
     if model is None:
         return None
+    model_context = dict(context)
+    if candidate_task_ids:
+        model_context["candidate_task_ids"] = list(candidate_task_ids)
     return await model.ainvoke(
         agent_name=agent.value,
         system_prompt=(
-            "Assess the onboarding context for your specialist domain. Return a "
-            "concise structured assessment. Do not invent facts or perform side effects."
+            f"You are the {agent.value} onboarding specialist. Assess the supplied "
+            "context and return structured guidance. Choose decision=proceed only "
+            "when the current candidate work is safe, decision=request_input when "
+            "authoritative information is missing, or decision=escalate when human "
+            "review is required. If candidate_task_ids are supplied, approved_task_ids "
+            "must contain only candidate IDs you recommend; use null when you do not "
+            "need to choose tasks. Treat deterministic_* fields in the context as "
+            "authoritative domain validation; do not add requirements solely because "
+            "a source field or candidate list is not included. Do not invent facts "
+            "or perform side effects."
         ),
-        user_input=json.dumps(context, default=str, sort_keys=True),
+        user_input=json.dumps(model_context, default=str, sort_keys=True),
         response_model=ModelAssessment,
+    )
+
+
+def apply_model_guidance(
+    result: SpecialistResult[Any],
+    *,
+    model_output: ModelAssessment | None,
+    candidate_task_ids: Sequence[str] = (),
+) -> SpecialistResult[Any]:
+    """Apply model guidance without allowing it to bypass deterministic policy."""
+
+    if model_output is None:
+        return result
+
+    errors = list(result.errors)
+    missing_inputs = list(result.missing_inputs)
+    proposed_tasks = list(result.proposed_tasks)
+    outcome = result.outcome
+
+    if model_output.approved_task_ids is not None:
+        approved = set(model_output.approved_task_ids)
+        candidates = set(candidate_task_ids)
+        unknown = approved - candidates
+        if unknown:
+            errors.append(
+                ErrorDetail(
+                    code="invalid_model_output",
+                    message=(
+                        f"{result.agent.value} model selected unknown task IDs: "
+                        f"{sorted(unknown)}"
+                    ),
+                )
+            )
+            proposed_tasks = []
+            outcome = SpecialistOutcome.NEEDS_RESOLUTION
+        else:
+            proposed_tasks = [
+                task for task in proposed_tasks if task.task_id in approved
+            ]
+
+    if model_output.decision is AgentDecision.REQUEST_INPUT:
+        had_domain_missing_inputs = bool(missing_inputs)
+        requested_inputs = model_output.requested_inputs or [
+            MissingInput(
+                field=f"{result.agent.value}.model_review",
+                reason=model_output.recommendation,
+                requested_from=result.agent.value,
+            )
+        ]
+        known_inputs = {(item.field, item.reason) for item in missing_inputs}
+        missing_inputs.extend(
+            item
+            for item in requested_inputs
+            if (item.field, item.reason) not in known_inputs
+        )
+        proposed_tasks = []
+        if not had_domain_missing_inputs and outcome not in {
+            SpecialistOutcome.NEEDS_RESOLUTION,
+            SpecialistOutcome.FAILED,
+        }:
+            outcome = SpecialistOutcome.NEEDS_INPUT
+
+    elif model_output.decision is AgentDecision.ESCALATE:
+        reasons = model_output.escalation_reasons or [model_output.recommendation]
+        errors.extend(
+            ErrorDetail(code="model_escalation", message=reason) for reason in reasons
+        )
+        proposed_tasks = []
+        outcome = SpecialistOutcome.NEEDS_RESOLUTION
+
+    return result.model_copy(
+        update={
+            "outcome": outcome,
+            "errors": errors,
+            "missing_inputs": missing_inputs,
+            "proposed_tasks": proposed_tasks,
+            "model_output": model_output,
+        }
     )
 
 
