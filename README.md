@@ -5,16 +5,19 @@ and LangSmith, with simulated enterprise integrations.
 
 ## Status
 
-The first implementation slice is in place: typed domain contracts, deterministic
-enterprise mocks, an idempotent operation executor, a reusable LangSmith tracing
-seam, and a LangGraph parent with HR, IT, Compliance, Payroll, and Communication
-specialist subgraphs. The PDF-shaped John Smith scenario runs offline and resumes
-from a typed event after missing bank details and training evidence.
+The implementation includes typed domain contracts, deterministic enterprise
+mocks, an idempotent operation executor, a reusable LangSmith tracing seam, and a
+LangGraph parent with HR, IT, Compliance, Payroll, and Communication specialist
+subgraphs. The same graph accepts either a scripted structured model for offline
+replay or the configured live LangChain model. The PDF-shaped John Smith scenario
+runs offline and resumes from a typed event after missing bank details and training
+evidence.
 
 See [ADR-0001: Scope and execution modes](docs/adr/0001-scope-and-execution-modes.md)
 for the accepted scope, [ADR-0008](docs/adr/0008-execution-invariants-and-implementation-shape.md)
-for execution invariants, and [ADR-0009](docs/adr/0009-domain-contracts-and-state-seam.md)
-for the contracts used by the implementation.
+for execution invariants, [ADR-0009](docs/adr/0009-domain-contracts-and-state-seam.md)
+for the contracts used by the implementation, and [ADR-0010](docs/adr/0010-provider-switching-and-observable-e2e.md)
+for model providers and reviewer-visible execution.
 
 ## Environment setup
 
@@ -48,20 +51,30 @@ The default graph and tests do not call the live model.
 
 ## Reviewer commands
 
-Offline means no model or enterprise-provider calls. The simulation is stateful,
-so tests exercise replay, failure, unknown outcomes, reconciliation, dependency
-gating, resume events, and notification delivery through the same application
-seams used by a future live adapter.
+Offline means no network calls. The simulation is stateful, and the scripted model
+plus simulated enterprise tools exercise replay, failure, unknown outcomes,
+reconciliation, dependency gating, resume events, and notification delivery through
+the same application seams used by live execution.
 
 | Purpose | Command |
 | --- | --- |
 | General offline suite | `uv run pytest` |
 | PDF scenario | `uv run pytest -m assignment -v -s` |
+| Agent-level scenarios with visible output | `uv run pytest tests/unit/agents -v -s` |
+| Observable offline end-to-end flow | `uv run pytest tests/e2e -v -s` |
 | PostgreSQL checkpointer smoke test | `uv run pytest --postgres tests/integration/test_postgres_checkpointer.py -v` |
-| Explicit live-model verification | `uv run pytest --live tests/live -v` |
+| Live model and onboarding flow | `uv run pytest --live tests/live -v -s` |
+| Offline reviewer demo | `uv run zensible-demo --mode offline` |
+| Live reviewer demo with simulated tools | `uv run zensible-demo --mode live` |
 
-Both modes use the same model factory and application contracts. Live execution is
-optional for reviewers and requires the local CLIProxyAPI settings in `.env`.
+The default graph and tests use the scripted provider. Live execution is explicit,
+requires the local CLIProxyAPI settings in `.env`, and uses the same graph, typed
+contracts, and simulated enterprise tools. The live tests assert structured results
+and business invariants rather than exact natural-language wording.
+
+The reviewer demo prints model requests/responses, simulated tool requests/responses,
+and the initial/resumed graph status as JSON lines. `--no-resume` shows only the first
+run.
 
 To run the local HTTP demo:
 
@@ -99,8 +112,10 @@ The current source layout is:
 - `src/zensible/orchestration/`: parent graph and checkpoint-friendly state.
 - `src/zensible/simulation/`: deterministic enterprise fixtures.
 - `src/zensible/tools/`: idempotent side-effect boundary.
+- `src/zensible/modeling/`: scripted and live structured model adapters.
 - `src/zensible/observability.py`: one opt-in native LangSmith seam.
 - `src/zensible/config.py` and `src/zensible/llm.py`: runtime settings and model factory.
+- `src/zensible/demo.py`: reviewer-facing offline/live transcript command.
 
 Ruff is already installed:
 
