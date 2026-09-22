@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+
+# Tooling and test artifacts
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Local runtime and inspection artifacts
+tmp/
+
+# macOS
+.DS_Store
+
