@@ -1,110 +1,98 @@
 # Zensible: multi-agent HR onboarding
 
-A production-minded assignment using FastAPI, LangChain, LangGraph, PostgreSQL,
-and LangSmith, with simulated enterprise integrations.
+A production-minded HR onboarding assignment built with FastAPI, LangChain,
+LangGraph, PostgreSQL checkpoints, and optional LangSmith tracing.
 
-## Status
+The parent graph coordinates five specialist subgraphs:
 
-The first implementation slice is in place: typed domain contracts, deterministic
-enterprise mocks, an idempotent operation executor, a reusable LangSmith tracing
-seam, and a LangGraph parent with HR, IT, Compliance, Payroll, and Communication
-specialist subgraphs. The PDF-shaped John Smith scenario runs offline and resumes
-from a typed event after missing bank details and training evidence.
+```text
+HR → IT + Compliance + Payroll (parallel) → actions → Communication
+```
 
-See [ADR-0001: Scope and execution modes](docs/adr/0001-scope-and-execution-modes.md)
-for the accepted scope, [ADR-0008](docs/adr/0008-execution-invariants-and-implementation-shape.md)
-for execution invariants, and [ADR-0009](docs/adr/0009-domain-contracts-and-state-seam.md)
-for the contracts used by the implementation.
+The enterprise systems are deterministic simulated tools. The model provider is
+switchable, so the same graph can run offline or against the configured live
+CLIProxyAPI model.
 
-## Environment setup
+## Setup
 
-Prerequisites: Git, uv, and Docker with Docker Compose.
+Requirements: Python 3.12, `uv`, and Docker.
 
 ```bash
 uv sync --locked
 git config core.hooksPath .githooks
 docker compose up -d --wait postgres
-docker compose ps
 ```
 
-Python is pinned to 3.12. PostgreSQL 18 Alpine uses a persistent Docker volume
-and is available with these local development credentials:
+PostgreSQL is available at:
 
 ```text
 postgresql://zensible:zensible_dev@localhost:5433/zensible
 ```
 
-Stop the service without deleting its volume:
+Live mode reads CLIProxyAPI settings from the ignored `.env` file. Copy the
+placeholders from `.env.example` and keep the proxy running at the configured URL.
+
+## Demo modes
+
+### Offline assignment demo
+
+No network or live model calls. Uses scripted model responses and simulated tools.
 
 ```bash
-docker compose stop postgres
+uv run zensible-demo --mode offline
 ```
 
-For live-model execution, populate the CLIProxyAPI placeholders from
-`.env.example` in a Git-ignored `.env`. Preserve any existing local values.
-The proxy URL currently used is `http://127.0.0.1:8317/v1`. Application consumption
-of these settings is centralized in the typed settings and LangChain model factory.
-The default graph and tests do not call the live model.
+This runs the PDF-shaped John Smith scenario twice: first it waits for missing
+bank/training evidence, then it resumes with a `ResumeEvent` and completes the
+available work. Use `--no-resume` to show only the first run.
 
-## Reviewer commands
+### Live model demo
 
-Offline means no model or enterprise-provider calls. The simulation is stateful,
-so tests exercise replay, failure, unknown outcomes, reconciliation, dependency
-gating, resume events, and notification delivery through the same application
-seams used by a future live adapter.
+Uses the real configured model but keeps enterprise tools simulated:
 
-| Purpose | Command |
-| --- | --- |
-| General offline suite | `uv run pytest` |
-| PDF scenario | `uv run pytest -m assignment -v -s` |
-| PostgreSQL checkpointer smoke test | `uv run pytest --postgres tests/integration/test_postgres_checkpointer.py -v` |
-| Explicit live-model verification | `uv run pytest --live tests/live -v` |
+```bash
+uv run zensible-demo --mode live
+```
 
-Both modes use the same model factory and application contracts. Live execution is
-optional for reviewers and requires the local CLIProxyAPI settings in `.env`.
+Both demos print model requests/responses, agent results, tool effects, and graph
+status in a readable transcript. Add `--format json` for JSON Lines output.
 
-To run the local HTTP demo:
+## Test commands
+
+```bash
+# All offline tests
+uv run pytest -q
+
+# PDF scenario with visible transcript
+uv run pytest -m assignment -v -s
+
+# Agent and offline end-to-end scenarios
+uv run pytest tests/unit/agents tests/e2e -v -s
+
+# PostgreSQL checkpoint recovery
+uv run pytest --postgres tests/integration/test_postgres_checkpointer.py -v -s
+
+# Live provider happy path and specialist edge cases
+uv run pytest --live tests/live -v -s
+```
+
+The `-s` flag shows printed transcripts. Live tests call the configured model;
+their tools remain simulated and assertions check stable business outcomes rather
+than exact natural-language wording.
+
+## Where to look
+
+- `src/zensible/domain/`: typed business contracts and graph state.
+- `src/zensible/agents/`: HR, IT, Compliance, Payroll, and Communication subgraphs.
+- `src/zensible/orchestration/`: parent graph, planning, actions, and status rules.
+- `src/zensible/tools/`: idempotent side-effect executor.
+- `src/zensible/modeling/`: scripted and live structured model adapters.
+- `src/zensible/observability.py`: shared event transcript and LangSmith seam.
+- `tests/`: unit, offline end-to-end, PostgreSQL, and live-provider tests.
+- `docs/adr/`: architecture decisions and scope.
+
+The FastAPI demo is available with:
 
 ```bash
 uv run uvicorn zensible.api.app:app --reload
-```
-
-Then create the PDF-shaped onboarding with `POST /onboardings` using the request
-shown in `tests/integration/test_api.py`, and submit a `ResumeEvent` to
-`POST /onboardings/{onboarding_id}/events` when training or bank details arrive.
-
-The PDF fixture uses John Smith, Engineering Manager, Bangalore, joining October 1,
-2026. It demonstrates partial completion and resumption after missing bank details
-and training updates. The FastAPI service is intentionally an in-memory demo seam;
-the PostgreSQL checkpoint adapter is implemented and tested separately so it can be
-introduced without changing the graph contracts.
-
-## Navigation and development standards
-
-- `pyproject.toml` and `uv.lock`: dependencies and reproducible installation.
-- `compose.yaml`: local PostgreSQL.
-- `.env.example`: placeholders; secrets belong in `.env`.
-- `.githooks/`: Conventional Commit validation and Ruff lint/format checks on
-  commit and push. Activate once per checkout with the setup command above.
-- `docs/adr/`: focused architecture decisions and their trade-offs.
-
-ADR-0002 through ADR-0006 define specialist boundaries. ADR-0007 defines the
-parent graph and concurrency. ADR-0008 defines the small set of cross-cutting
-execution rules that make the implementation robust without adding infrastructure.
-
-The current source layout is:
-
-- `src/zensible/domain/`: serializable business contracts.
-- `src/zensible/agents/`: private specialist subgraphs.
-- `src/zensible/orchestration/`: parent graph and checkpoint-friendly state.
-- `src/zensible/simulation/`: deterministic enterprise fixtures.
-- `src/zensible/tools/`: idempotent side-effect boundary.
-- `src/zensible/observability.py`: one opt-in native LangSmith seam.
-- `src/zensible/config.py` and `src/zensible/llm.py`: runtime settings and model factory.
-
-Ruff is already installed:
-
-```bash
-uv run ruff check .
-uv run ruff format --check .
 ```

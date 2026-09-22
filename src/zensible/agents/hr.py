@@ -2,6 +2,7 @@
 
 from langgraph.graph import END, StateGraph
 
+from zensible.agents.runtime import model_assessment, record_result
 from zensible.agents.state import SpecialistState
 from zensible.domain.contracts import (
     AgentName,
@@ -14,14 +15,24 @@ from zensible.domain.contracts import (
     SpecialistResult,
     ValidatedEmployeeFacts,
 )
-from zensible.observability import trace_operation
+from zensible.modeling import StructuredAgentModel
+from zensible.observability import EventSink, trace_operation
 
 
 @trace_operation("hr.assess", tags=("onboarding", "hr"))
-def assess(
-    request: OnboardingRequest, *, state_revision: int
+async def assess(
+    request: OnboardingRequest,
+    *,
+    state_revision: int,
+    model: StructuredAgentModel | None = None,
 ) -> SpecialistResult[ValidatedEmployeeFacts]:
     """Validate the employee fixture without changing HR source data."""
+
+    model_output = await model_assessment(
+        model,
+        agent=AgentName.HR,
+        context=request.model_dump(mode="json"),
+    )
 
     if request.employee_reference.lower() == "john smith":
         facts = ValidatedEmployeeFacts(
@@ -43,6 +54,7 @@ def assess(
             findings=[
                 Finding(code="hr_facts_validated", message="HR facts are complete")
             ],
+            model_output=model_output,
         )
 
     if "ambiguous" in request.employee_reference.lower():
@@ -57,6 +69,7 @@ def assess(
                     values={"candidate_1": "emp_123", "candidate_2": "emp_987"},
                 )
             ],
+            model_output=model_output,
         )
 
     return SpecialistResult(
@@ -71,19 +84,24 @@ def assess(
                 requested_from="hr",
             )
         ],
+        model_output=model_output,
     )
 
 
-def build_graph():
+def build_graph(
+    model: StructuredAgentModel | None = None,
+    *,
+    events: EventSink | None = None,
+):
     workflow = StateGraph(SpecialistState)
 
-    def assess_node(state: SpecialistState) -> dict[str, object]:
-        return {
-            "result": assess(
-                state["request"],
-                state_revision=state["context"].state_revision,
-            )
-        }
+    async def assess_node(state: SpecialistState) -> dict[str, object]:
+        result = await assess(
+            state["request"],
+            state_revision=state["context"].state_revision,
+            model=model,
+        )
+        return {"result": record_result(events, result)}
 
     workflow.add_node("assess", assess_node)
     workflow.add_edge("assess", END)

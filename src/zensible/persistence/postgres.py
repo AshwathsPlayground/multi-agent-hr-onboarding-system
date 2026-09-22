@@ -20,6 +20,7 @@ from zensible.domain.contracts import (
     Finding,
     FindingSeverity,
     MissingInput,
+    ModelAssessment,
     OnboardingRequest,
     OnboardingStatus,
     OperationRecord,
@@ -41,6 +42,7 @@ from zensible.domain.contracts import (
     TaskStatus,
     ValidatedEmployeeFacts,
 )
+from zensible.tools.operation_executor import OperationResult
 
 CHECKPOINT_TYPES = (
     AgentContext,
@@ -56,9 +58,11 @@ CHECKPOINT_TYPES = (
     Finding,
     FindingSeverity,
     MissingInput,
+    ModelAssessment,
     OnboardingRequest,
     OnboardingStatus,
     OperationRecord,
+    OperationResult,
     OperationStatus,
     PayrollAssessment,
     Provenance,
