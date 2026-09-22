@@ -9,14 +9,63 @@ from __future__ import annotations
 
 import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, ParamSpec, TypeVar, overload
+from dataclasses import dataclass, field
+from typing import Any, ParamSpec, Protocol, TypeVar, overload
 
 from langsmith import traceable
+from pydantic import JsonValue
 
 P = ParamSpec("P")
 R = TypeVar("R")
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionEvent:
+    """Small, serializable event used by demos and test transcripts."""
+
+    kind: str
+    name: str
+    payload: dict[str, JsonValue] = field(default_factory=dict)
+
+
+class EventSink(Protocol):
+    def emit(
+        self,
+        kind: str,
+        name: str,
+        payload: Mapping[str, JsonValue] | None = None,
+    ) -> None: ...
+
+
+class RecordingEventSink:
+    """Collect observable model, tool, and graph events in execution order."""
+
+    def __init__(self) -> None:
+        self.events: list[ExecutionEvent] = []
+
+    def emit(
+        self,
+        kind: str,
+        name: str,
+        payload: Mapping[str, JsonValue] | None = None,
+    ) -> None:
+        self.events.append(
+            ExecutionEvent(kind=kind, name=name, payload=dict(payload or {}))
+        )
+
+
+class NullEventSink:
+    """No-op event sink for callers that do not need a transcript."""
+
+    def emit(
+        self,
+        kind: str,
+        name: str,
+        payload: Mapping[str, JsonValue] | None = None,
+    ) -> None:
+        del kind, name, payload
 
 
 def tracing_enabled() -> bool:

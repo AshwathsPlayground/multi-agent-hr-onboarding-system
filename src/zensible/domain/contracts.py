@@ -283,6 +283,15 @@ class DeliveryResult(ContractModel):
     notification_reference: str | None = None
 
 
+class ModelAssessment(ContractModel):
+    """Structured, observable output produced by an agent model."""
+
+    summary: str = Field(min_length=1)
+    recommendation: str = Field(min_length=1)
+    confidence: float = Field(ge=0, le=1)
+    evidence: list[str] = Field(default_factory=list)
+
+
 PayloadT = TypeVar("PayloadT")
 
 
@@ -300,6 +309,7 @@ class SpecialistResult[PayloadT](ContractModel):
     notification_needs: list[NotificationNeed] = Field(default_factory=list)
     errors: list[ErrorDetail] = Field(default_factory=list)
     reassessment_reasons: list[str] = Field(default_factory=list)
+    model_output: ModelAssessment | None = None
 
 
 __all__ = [
@@ -316,6 +326,7 @@ __all__ = [
     "Finding",
     "FindingSeverity",
     "MissingInput",
+    "ModelAssessment",
     "OnboardingRequest",
     "OnboardingStatus",
     "OperationRecord",

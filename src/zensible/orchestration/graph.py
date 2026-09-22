@@ -23,6 +23,8 @@ from zensible.domain.contracts import (
     TaskRecord,
     TaskStatus,
 )
+from zensible.modeling import ScriptedStructuredAgentModel, StructuredAgentModel
+from zensible.observability import EventSink
 from zensible.orchestration.state import OnboardingState
 from zensible.orchestration.validation import validate_task_proposals
 from zensible.simulation import SimulatedCompany
@@ -315,17 +317,33 @@ def build_onboarding_graph(
     *,
     executor: OperationExecutor | None = None,
     checkpointer: Any | None = None,
+    agent_model: StructuredAgentModel | None = None,
+    events: EventSink | None = None,
 ):
-    """Compile the parent graph with injected tools and optional checkpointing."""
+    """Compile the parent graph with injected providers and checkpointing."""
 
-    operation_executor = executor or OperationExecutor(SimulatedCompany())
+    operation_executor = executor or OperationExecutor(
+        SimulatedCompany(), events=events
+    )
+    model = agent_model or ScriptedStructuredAgentModel(
+        {
+            agent.value: {
+                "summary": f"{agent.value} scripted assessment completed",
+                "recommendation": "follow deterministic domain policy",
+                "confidence": 1.0,
+                "evidence": ["offline scripted model"],
+            }
+            for agent in AgentName
+        },
+        events=events,
+    )
     specialist_graphs = {
-        "it": it.build_graph(),
-        "compliance": compliance.build_graph(),
-        "payroll": payroll.build_graph(),
+        "it": it.build_graph(model, events=events),
+        "compliance": compliance.build_graph(model, events=events),
+        "payroll": payroll.build_graph(model, events=events),
     }
-    hr_graph = hr.build_graph()
-    communication_graph = communication.build_graph()
+    hr_graph = hr.build_graph(model, events=events)
+    communication_graph = communication.build_graph(model, events=events)
 
     workflow = StateGraph(OnboardingState)
     workflow.add_node("prepare", _prepare)

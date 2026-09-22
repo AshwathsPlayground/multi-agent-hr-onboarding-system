@@ -12,6 +12,7 @@ from zensible.domain.contracts import (
     OperationStatus,
     ReconciliationStatus,
 )
+from zensible.observability import EventSink, NullEventSink
 from zensible.simulation.fixtures import FailureMode, SimulatedCompany
 
 
@@ -55,19 +56,44 @@ class OperationFingerprintConflict(ValueError):
 class OperationExecutor:
     """Own execution, replay protection, and reconciliation for writes."""
 
-    def __init__(self, company: SimulatedCompany) -> None:
+    def __init__(
+        self,
+        company: SimulatedCompany,
+        *,
+        events: EventSink | None = None,
+    ) -> None:
         self._company = company
         self._records: dict[str, OperationRecord] = {}
         self._lock_guard = RLock()
         self._operation_locks: dict[str, RLock] = {}
+        self._events = events or NullEventSink()
 
     def _lock_for(self, operation_key: str) -> RLock:
         with self._lock_guard:
             return self._operation_locks.setdefault(operation_key, RLock())
 
     def execute(self, request: OperationRequest) -> OperationResult:
+        self._events.emit(
+            "tool.request",
+            request.operation_type,
+            {
+                "operation_key": request.operation_key,
+                "task_id": request.task_id,
+            },
+        )
         with self._lock_for(request.operation_key):
-            return self._execute_locked(request)
+            result = self._execute_locked(request)
+        self._events.emit(
+            "tool.response",
+            request.operation_type,
+            {
+                "operation_key": request.operation_key,
+                "status": result.status.value,
+                "replayed": result.replayed,
+                "external_reference": result.operation.external_reference,
+            },
+        )
+        return result
 
     def _execute_locked(self, request: OperationRequest) -> OperationResult:
         """Execute once, reconcile unknowns, or return an equivalent replay."""
