@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn[standard]>=0.53.0",
 ]
 
+[project.scripts]
+zensible-demo = "zensible.demo:main"
+
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
