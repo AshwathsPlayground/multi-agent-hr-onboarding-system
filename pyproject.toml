@@ -1,11 +1,12 @@
 [project]
 name = "zensible"
 version = "0.1.0"
-description = "Add your description here"
+description = "Production-minded multi-agent HR onboarding system"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1",
     "langchain>=1.4.2",
+    "langchain-openai>=1.6.3",
     "langgraph>=1.2.12",
     "langgraph-checkpoint-postgres>=3.1.2",
     "langsmith>=0.14.0",
@@ -21,4 +22,20 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.16.8",
+]
+
+[build-system]
+requires = ["setuptools>=75.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+    "live: calls a configured live model or service",
+    "assignment: exercises the PDF scenario",
+    "postgres: requires the local PostgreSQL service",
 ]

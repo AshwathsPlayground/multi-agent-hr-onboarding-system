@@ -5,11 +5,16 @@ and LangSmith, with simulated enterprise integrations.
 
 ## Status
 
-Only the development environment is implemented. Application code and tests will
-follow architecture discussions. See [ADR-0001: Scope and execution modes](docs/adr/0001-scope-and-execution-modes.md)
-for the accepted scope, completion criteria, and documentation standards. The
-execution invariants and implementation simplifications are recorded in
-[ADR-0008](docs/adr/0008-execution-invariants-and-implementation-shape.md).
+The first implementation slice is in place: typed domain contracts, deterministic
+enterprise mocks, an idempotent operation executor, a reusable LangSmith tracing
+seam, and a LangGraph parent with HR, IT, Compliance, Payroll, and Communication
+specialist subgraphs. The PDF-shaped John Smith scenario runs offline and resumes
+from a typed event after missing bank details and training evidence.
+
+See [ADR-0001: Scope and execution modes](docs/adr/0001-scope-and-execution-modes.md)
+for the accepted scope, [ADR-0008](docs/adr/0008-execution-invariants-and-implementation-shape.md)
+for execution invariants, and [ADR-0009](docs/adr/0009-domain-contracts-and-state-seam.md)
+for the contracts used by the implementation.
 
 ## Environment setup
 
@@ -35,31 +40,44 @@ Stop the service without deleting its volume:
 docker compose stop postgres
 ```
 
-For future live-model execution, populate the CLIProxyAPI placeholders from
+For live-model execution, populate the CLIProxyAPI placeholders from
 `.env.example` in a Git-ignored `.env`. Preserve any existing local values.
 The proxy URL currently used is `http://127.0.0.1:8317/v1`. Application consumption
-of these settings, model selection, and LangSmith configuration are not implemented.
+of these settings is centralized in the typed settings and LangChain model factory.
+The default graph and tests do not call the live model.
 
-## Planned reviewer commands
+## Reviewer commands
 
-**These interfaces are planned, not implemented.** Offline means no external calls
-during tests after dependencies and the Docker image are available. PostgreSQL
-integration tests will use isolated test data rather than reset development data.
+Offline means no model or enterprise-provider calls. The simulation is stateful,
+so tests exercise replay, failure, unknown outcomes, reconciliation, dependency
+gating, resume events, and notification delivery through the same application
+seams used by a future live adapter.
 
-| Purpose | Planned command |
+| Purpose | Command |
 | --- | --- |
 | General offline suite | `uv run pytest` |
-| Isolated PDF scenario, also included in the offline suite | `uv run pytest -m assignment -v -s` |
+| PDF scenario | `uv run pytest -m assignment -v -s` |
+| PostgreSQL checkpointer smoke test | `uv run pytest --postgres tests/integration/test_postgres_checkpointer.py -v` |
 | Explicit live-model verification | `uv run pytest --live tests/live -v` |
 
-Both modes use the same application and simulated enterprise tools. Offline tests
-script model responses; live tests use a real model. Live execution is optional
-for reviewers but must be exercised by us before submission.
+Both modes use the same model factory and application contracts. Live execution is
+optional for reviewers and requires the local CLIProxyAPI settings in `.env`.
+
+To run the local HTTP demo:
+
+```bash
+uv run uvicorn zensible.api.app:app --reload
+```
+
+Then create the PDF-shaped onboarding with `POST /onboardings` using the request
+shown in `tests/integration/test_api.py`, and submit a `ResumeEvent` to
+`POST /onboardings/{onboarding_id}/events` when training or bank details arrive.
 
 The PDF fixture uses John Smith, Engineering Manager, Bangalore, joining October 1,
 2026. It demonstrates partial completion and resumption after missing bank details
-and training updates. FastAPI will expose creation, status, and update entry points;
-routes and launch instructions will follow implementation.
+and training updates. The FastAPI service is intentionally an in-memory demo seam;
+the PostgreSQL checkpoint adapter is implemented and tested separately so it can be
+introduced without changing the graph contracts.
 
 ## Navigation and development standards
 
@@ -74,8 +92,17 @@ ADR-0002 through ADR-0006 define specialist boundaries. ADR-0007 defines the
 parent graph and concurrency. ADR-0008 defines the small set of cross-cutting
 execution rules that make the implementation robust without adding infrastructure.
 
-Source layout, graph topology, state/recovery design, and detailed observability
-remain open for subsequent discussions. Ruff is already installed:
+The current source layout is:
+
+- `src/zensible/domain/`: serializable business contracts.
+- `src/zensible/agents/`: private specialist subgraphs.
+- `src/zensible/orchestration/`: parent graph and checkpoint-friendly state.
+- `src/zensible/simulation/`: deterministic enterprise fixtures.
+- `src/zensible/tools/`: idempotent side-effect boundary.
+- `src/zensible/observability.py`: one opt-in native LangSmith seam.
+- `src/zensible/config.py` and `src/zensible/llm.py`: runtime settings and model factory.
+
+Ruff is already installed:
 
 ```bash
 uv run ruff check .
