@@ -1,5 +1,4 @@
 import asyncio
-import json
 from datetime import date
 
 import pytest
@@ -7,7 +6,7 @@ import pytest
 from zensible.config import Settings
 from zensible.domain.contracts import OnboardingRequest
 from zensible.modeling import LangChainStructuredAgentModel
-from zensible.observability import RecordingEventSink
+from zensible.observability import RecordingEventSink, render_events
 from zensible.orchestration.graph import build_onboarding_graph
 from zensible.simulation import SimulatedCompany
 from zensible.tools import OperationExecutor
@@ -39,17 +38,7 @@ def test_live_model_runs_all_specialists_with_simulated_tools() -> None:
 
     state = asyncio.run(graph.ainvoke({"request": request}))
 
-    for event in events.events:
-        print(
-            json.dumps(
-                {
-                    "kind": event.kind,
-                    "name": event.name,
-                    "payload": event.payload,
-                },
-                sort_keys=True,
-            )
-        )
+    print(render_events(events.events))
 
     model_responses = [
         event for event in events.events if event.kind == "model.response"

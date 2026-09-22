@@ -20,7 +20,7 @@ from zensible.modeling import (
     ScriptedStructuredAgentModel,
     StructuredAgentModel,
 )
-from zensible.observability import ExecutionEvent, RecordingEventSink
+from zensible.observability import ExecutionEvent, RecordingEventSink, format_event
 from zensible.orchestration.graph import build_onboarding_graph
 from zensible.simulation import SimulatedCompany
 from zensible.tools import OperationExecutor
@@ -52,22 +52,25 @@ def _offline_model(events: RecordingEventSink) -> StructuredAgentModel:
     )
 
 
-def _print_events(events: list[ExecutionEvent], start: int) -> int:
+def _print_events(events: list[ExecutionEvent], start: int, output_format: str) -> int:
     for event in events[start:]:
-        print(
-            json.dumps(
-                {
-                    "kind": event.kind,
-                    "name": event.name,
-                    "payload": event.payload,
-                },
-                sort_keys=True,
+        if output_format == "json":
+            print(
+                json.dumps(
+                    {
+                        "kind": event.kind,
+                        "name": event.name,
+                        "payload": event.payload,
+                    },
+                    sort_keys=True,
+                )
             )
-        )
+        else:
+            print(format_event(event))
     return len(events)
 
 
-async def _run(mode: str, resume: bool) -> None:
+async def _run(mode: str, resume: bool, output_format: str) -> None:
     events = RecordingEventSink()
     company = SimulatedCompany()
     if mode == "live":
@@ -84,8 +87,11 @@ async def _run(mode: str, resume: bool) -> None:
     )
 
     first = await graph.ainvoke({"request": _request()})
-    event_index = _print_events(events.events, 0)
-    print(json.dumps({"run": "initial", "status": first["status"].value}))
+    event_index = _print_events(events.events, 0, output_format)
+    if output_format == "json":
+        print(json.dumps({"run": "initial", "status": first["status"].value}))
+    else:
+        print(f"\n=== Initial run ===\nStatus: {first['status'].value}")
 
     if not resume:
         return
@@ -105,8 +111,11 @@ async def _run(mode: str, resume: bool) -> None:
             "resume_event": resume_event,
         }
     )
-    _print_events(events.events, event_index)
-    print(json.dumps({"run": "resumed", "status": resumed["status"].value}))
+    _print_events(events.events, event_index, output_format)
+    if output_format == "json":
+        print(json.dumps({"run": "resumed", "status": resumed["status"].value}))
+    else:
+        print(f"\n=== Resumed run ===\nStatus: {resumed['status'].value}")
 
 
 def main() -> None:
@@ -117,8 +126,14 @@ def main() -> None:
         action="store_true",
         help="show only the first onboarding run",
     )
+    parser.add_argument(
+        "--format",
+        choices=("human", "json"),
+        default="human",
+        help="transcript format (human by default; json is JSON Lines)",
+    )
     args = parser.parse_args()
-    asyncio.run(_run(args.mode, resume=not args.no_resume))
+    asyncio.run(_run(args.mode, resume=not args.no_resume, output_format=args.format))
 
 
 if __name__ == "__main__":

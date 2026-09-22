@@ -80,3 +80,46 @@ def test_enabled_tracing_delegates_native_configuration_and_preserves_result(
 def test_empty_operation_name_is_rejected() -> None:
     with pytest.raises(ValueError, match="operation_name"):
         observability.trace_operation("   ")
+
+
+def test_human_event_format_summarizes_context_and_keeps_agent_output_visible() -> None:
+    request = observability.ExecutionEvent(
+        kind="model.request",
+        name="payroll",
+        payload={
+            "provider": "live",
+            "input": (
+                '{"onboarding_id":"onb_123", "state_revision":1, '
+                '"validated_hr_facts":{"employee_id":"emp_123"}, '
+                '"existing_tasks":[], "existing_operations":[]}'
+            ),
+        },
+    )
+    result = observability.ExecutionEvent(
+        kind="agent.result",
+        name="payroll",
+        payload={
+            "result": {
+                "outcome": "completed",
+                "phase": "assessment",
+                "state_revision": 1,
+                "model_output": {
+                    "summary": "model assessed payroll readiness",
+                    "confidence": 0.92,
+                },
+                "missing_inputs": [
+                    {"field": "bank_details_reference", "reason": "required"}
+                ],
+                "payload": {"eligible": False, "compensation_reference": "comp_123"},
+            }
+        },
+    )
+
+    rendered = observability.render_events([request, result])
+
+    assert "provider=live" in rendered
+    assert "onboarding_id=onb_123" in rendered
+    assert "employee_id=emp_123" in rendered
+    assert "model assessed payroll readiness" in rendered
+    assert "Missing input: bank_details_reference — required" in rendered
+    assert "validated_hr_facts" not in rendered

@@ -72,9 +72,14 @@ requires the local CLIProxyAPI settings in `.env`, and uses the same graph, type
 contracts, and simulated enterprise tools. The live tests assert structured results
 and business invariants rather than exact natural-language wording.
 
-The reviewer demo prints model requests/responses, simulated tool requests/responses,
-and the initial/resumed graph status as JSON lines. `--no-resume` shows only the first
-run.
+The reviewer demo prints a compact, human-readable transcript of model
+requests/responses, simulated tool requests/responses, agent results, and the
+initial/resumed graph status. `--no-resume` shows only the first run. Use
+`--format json` when a machine-readable JSON Lines transcript is needed.
+
+```bash
+uv run zensible-demo --mode offline --format json
+```
 
 To run the local HTTP demo:
 
