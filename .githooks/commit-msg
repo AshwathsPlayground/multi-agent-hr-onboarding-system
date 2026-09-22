@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+set -eu
+
+commit_message_file=${1:?commit message file is required}
+subject=$(sed -n '1p' "$commit_message_file")
+
+# Permit Git-generated merge and revert commits.
+case "$subject" in
+  Merge\ *|Revert\ *)
+    exit 0
+    ;;
+esac
+
+if ! printf '%s\n' "$subject" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?(!)?: .+'; then
+  printf '%s\n' "Commit rejected: use Conventional Commits, for example:" >&2
+  printf '%s\n' "  feat(workflow): add onboarding coordinator" >&2
+  printf '%s\n' "  fix(tools)!: prevent duplicate payroll requests" >&2
+  exit 1
+fi
+
