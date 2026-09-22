@@ -2,7 +2,11 @@
 
 from langgraph.graph import END, StateGraph
 
-from zensible.agents.runtime import model_assessment, record_result
+from zensible.agents.runtime import (
+    apply_model_guidance,
+    model_assessment,
+    record_result,
+)
 from zensible.agents.state import SpecialistState
 from zensible.domain.contracts import (
     AgentName,
@@ -27,11 +31,8 @@ async def assess(
     state_revision: int,
     model: StructuredAgentModel | None = None,
 ) -> SpecialistResult[ProvisioningAssessment]:
-    model_output = await model_assessment(
-        model,
-        agent=AgentName.IT,
-        context=context.model_dump(mode="json"),
-    )
+    laptop_task_id = f"{context.onboarding_id}:it:laptop"
+    aws_task_id = f"{context.onboarding_id}:it:aws"
     items = [
         ProvisioningItem(resource="laptop"),
         ProvisioningItem(
@@ -42,7 +43,7 @@ async def assess(
     ]
     proposals = [
         TaskProposal(
-            task_id=f"{context.onboarding_id}:it:laptop",
+            task_id=laptop_task_id,
             owner_agent=AgentName.IT,
             intent=TaskIntent.SUBMIT_IT_REQUEST,
             goal="submit laptop provisioning request",
@@ -50,7 +51,7 @@ async def assess(
             operation_key=f"{context.onboarding_id}:it:laptop",
         ),
         TaskProposal(
-            task_id=f"{context.onboarding_id}:it:aws",
+            task_id=aws_task_id,
             owner_agent=AgentName.IT,
             intent=TaskIntent.SUBMIT_IT_REQUEST,
             goal="submit AWS access request",
@@ -59,14 +60,29 @@ async def assess(
             operation_key=f"{context.onboarding_id}:it:aws",
         ),
     ]
-    return SpecialistResult(
+    model_context = context.model_dump(mode="json")
+    model_context["deterministic_provisioning_assessment"] = {
+        "items": [item.model_dump(mode="json") for item in items],
+        "candidate_tasks": [task.model_dump(mode="json") for task in proposals],
+    }
+    model_output = await model_assessment(
+        model,
         agent=AgentName.IT,
-        phase=SpecialistPhase.ASSESSMENT,
-        outcome=SpecialistOutcome.COMPLETED,
-        state_revision=state_revision,
-        payload=ProvisioningAssessment(items=items),
-        proposed_tasks=proposals,
+        context=model_context,
+        candidate_task_ids=[laptop_task_id, aws_task_id],
+    )
+    return apply_model_guidance(
+        SpecialistResult(
+            agent=AgentName.IT,
+            phase=SpecialistPhase.ASSESSMENT,
+            outcome=SpecialistOutcome.COMPLETED,
+            state_revision=state_revision,
+            payload=ProvisioningAssessment(items=items),
+            proposed_tasks=proposals,
+            model_output=model_output,
+        ),
         model_output=model_output,
+        candidate_task_ids=[laptop_task_id, aws_task_id],
     )
 
 

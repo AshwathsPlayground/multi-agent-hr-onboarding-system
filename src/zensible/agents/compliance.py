@@ -2,7 +2,11 @@
 
 from langgraph.graph import END, StateGraph
 
-from zensible.agents.runtime import model_assessment, record_result
+from zensible.agents.runtime import (
+    apply_model_guidance,
+    model_assessment,
+    record_result,
+)
 from zensible.agents.state import SpecialistState
 from zensible.domain.contracts import (
     AgentName,
@@ -29,11 +33,7 @@ async def assess(
     state_revision: int,
     model: StructuredAgentModel | None = None,
 ) -> SpecialistResult[ComplianceAssessment]:
-    model_output = await model_assessment(
-        model,
-        agent=AgentName.COMPLIANCE,
-        context=context.model_dump(mode="json"),
-    )
+    case_task_id = f"{context.onboarding_id}:compliance:case"
     training_verified = (
         context.resume_event is not None
         and context.resume_event.kind is ResumeEventKind.TRAINING_EVIDENCE_SUBMITTED
@@ -58,7 +58,7 @@ async def assess(
         if case_exists
         else [
             TaskProposal(
-                task_id=f"{context.onboarding_id}:compliance:case",
+                task_id=case_task_id,
                 owner_agent=AgentName.COMPLIANCE,
                 intent=TaskIntent.CREATE_COMPLIANCE_CASE,
                 goal="open the compliance onboarding case",
@@ -66,14 +66,29 @@ async def assess(
             )
         ]
     )
-    return SpecialistResult(
+    model_context = context.model_dump(mode="json")
+    model_context["deterministic_compliance_assessment"] = {
+        "requirements": [requirement.model_dump(mode="json")],
+        "candidate_tasks": [task.model_dump(mode="json") for task in proposed_tasks],
+    }
+    model_output = await model_assessment(
+        model,
         agent=AgentName.COMPLIANCE,
-        phase=SpecialistPhase.ASSESSMENT,
-        outcome=SpecialistOutcome.COMPLETED,
-        state_revision=state_revision,
-        payload=ComplianceAssessment(requirements=[requirement]),
-        proposed_tasks=proposed_tasks,
+        context=model_context,
+        candidate_task_ids=[case_task_id],
+    )
+    return apply_model_guidance(
+        SpecialistResult(
+            agent=AgentName.COMPLIANCE,
+            phase=SpecialistPhase.ASSESSMENT,
+            outcome=SpecialistOutcome.COMPLETED,
+            state_revision=state_revision,
+            payload=ComplianceAssessment(requirements=[requirement]),
+            proposed_tasks=proposed_tasks,
+            model_output=model_output,
+        ),
         model_output=model_output,
+        candidate_task_ids=[case_task_id],
     )
 
 

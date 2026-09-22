@@ -20,6 +20,16 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_SENSITIVE_FIELD_MARKERS = (
+    "bank_details",
+    "account_number",
+    "routing_number",
+    "ssn",
+    "tax_id",
+    "secret",
+    "token",
+    "api_key",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +62,9 @@ class RecordingEventSink:
         name: str,
         payload: Mapping[str, JsonValue] | None = None,
     ) -> None:
+        safe_payload = _redact_value(dict(payload or {}))
         self.events.append(
-            ExecutionEvent(kind=kind, name=name, payload=dict(payload or {}))
+            ExecutionEvent(kind=kind, name=name, payload=dict(safe_payload))
         )
 
 
@@ -84,6 +95,21 @@ def render_events(events: Sequence[ExecutionEvent]) -> str:
 
 def _mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _redact_value(value: object, *, field_name: str | None = None) -> object:
+    if field_name is not None and any(
+        marker in field_name.lower() for marker in _SENSITIVE_FIELD_MARKERS
+    ):
+        return "[REDACTED]"
+    if isinstance(value, Mapping):
+        return {
+            str(key): _redact_value(item, field_name=str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    return value
 
 
 def _mappings(value: object) -> list[Mapping[str, object]]:
@@ -204,15 +230,25 @@ def _error_lines(result: Mapping[str, object]) -> list[str]:
 
 def _task_lines(result: Mapping[str, object]) -> list[str]:
     tasks = _mappings(result.get("proposed_tasks"))
-    if not tasks:
-        return []
-    return [
-        "  Proposed tasks: "
-        + "; ".join(
-            f"{task.get('intent', 'n/a')} ({task.get('task_id', 'n/a')})"
-            for task in tasks
+    deferred_tasks = _mappings(result.get("deferred_tasks"))
+    lines: list[str] = []
+    if tasks:
+        lines.append(
+            "  Proposed tasks: "
+            + "; ".join(
+                f"{task.get('intent', 'n/a')} ({task.get('task_id', 'n/a')})"
+                for task in tasks
+            )
         )
-    ]
+    if deferred_tasks:
+        lines.append(
+            "  Deferred tasks: "
+            + "; ".join(
+                f"{task.get('intent', 'n/a')} ({task.get('task_id', 'n/a')})"
+                for task in deferred_tasks
+            )
+        )
+    return lines
 
 
 def _payload_lines(payload: Mapping[str, object]) -> list[str]:
@@ -273,8 +309,16 @@ def _delivery_payload(payload: Mapping[str, object]) -> list[str]:
 
 def _pairs(payload: Mapping[str, object], keys: Sequence[str]) -> str:
     return "; ".join(
-        f"{key}={payload.get(key)}" for key in keys if payload.get(key) is not None
+        f"{key}={_display_value(key, payload.get(key))}"
+        for key in keys
+        if payload.get(key) is not None
     )
+
+
+def _display_value(key: str, value: object) -> object:
+    if any(marker in key.lower() for marker in _SENSITIVE_FIELD_MARKERS):
+        return "[REDACTED]"
+    return value
 
 
 def _format_model_request(event: ExecutionEvent) -> str:
@@ -289,12 +333,28 @@ def _format_model_request(event: ExecutionEvent) -> str:
 def _format_model_response(event: ExecutionEvent) -> str:
     output = _mapping(event.payload.get("output"))
     evidence = output.get("evidence", [])
+    approved_tasks = output.get("approved_task_ids")
+    requested_inputs = _mappings(output.get("requested_inputs"))
+    escalations = output.get("escalation_reasons", [])
     lines = [
         f"[MODEL RESPONSE] {event.name} provider={event.payload.get('provider', 'unknown')}",
         f"  Summary: {output.get('summary', 'n/a')}",
         f"  Recommendation: {output.get('recommendation', 'n/a')}",
         f"  Confidence: {output.get('confidence', 'n/a')}",
+        f"  Decision: {output.get('decision', 'n/a')}",
     ]
+    if approved_tasks is not None:
+        lines.append(f"  Approved tasks: {_join_values(approved_tasks)}")
+    if requested_inputs:
+        lines.append(
+            "  Requested inputs: "
+            + "; ".join(
+                f"{item.get('field', 'n/a')} — {item.get('reason', 'n/a')}"
+                for item in requested_inputs
+            )
+        )
+    if escalations:
+        lines.append(f"  Escalation reasons: {_join_values(escalations)}")
     return "\n".join(
         lines + [f"  Evidence: {_join_values(evidence)}"] if evidence else lines
     )
@@ -303,16 +363,32 @@ def _format_model_response(event: ExecutionEvent) -> str:
 def _format_agent_result(event: ExecutionEvent) -> str:
     result = _mapping(event.payload.get("result"))
     model_output = _mapping(result.get("model_output"))
-    model_lines = (
-        [
+    model_lines: list[str] = []
+    if model_output:
+        model_lines = [
             (
                 f"  Model: {model_output.get('summary', 'n/a')} "
                 f"(confidence={model_output.get('confidence', 'n/a')})"
-            )
+            ),
+            f"  Decision: {model_output.get('decision', 'n/a')}",
         ]
-        if model_output
-        else []
-    )
+        if model_output.get("approved_task_ids") is not None:
+            model_lines.append(
+                "  Approved tasks: "
+                + _join_values(model_output.get("approved_task_ids"))
+            )
+        requested_inputs = _mappings(model_output.get("requested_inputs"))
+        if requested_inputs:
+            model_lines.append(
+                "  Requested inputs: "
+                + "; ".join(
+                    f"{item.get('field', 'n/a')} — {item.get('reason', 'n/a')}"
+                    for item in requested_inputs
+                )
+            )
+        escalations = model_output.get("escalation_reasons", [])
+        if escalations:
+            model_lines.append(f"  Escalation reasons: {_join_values(escalations)}")
     header = (
         f"[AGENT RESULT] {event.name} outcome={result.get('outcome', 'n/a')} "
         f"phase={result.get('phase', 'n/a')} revision={result.get('state_revision', 'n/a')}"

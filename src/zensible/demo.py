@@ -38,6 +38,11 @@ def _request() -> OnboardingRequest:
 
 
 def _offline_model(events: RecordingEventSink) -> StructuredAgentModel:
+    approved_tasks = {
+        AgentName.IT: ["onb_demo_cli:it:laptop", "onb_demo_cli:it:aws"],
+        AgentName.COMPLIANCE: ["onb_demo_cli:compliance:case"],
+        AgentName.PAYROLL: ["onb_demo_cli:payroll:setup"],
+    }
     return ScriptedStructuredAgentModel(
         {
             agent.value: ModelAssessment(
@@ -45,6 +50,7 @@ def _offline_model(events: RecordingEventSink) -> StructuredAgentModel:
                 recommendation="continue with deterministic domain policy",
                 confidence=0.99,
                 evidence=["offline demo fixture"],
+                approved_task_ids=approved_tasks.get(agent),
             )
             for agent in AgentName
         },

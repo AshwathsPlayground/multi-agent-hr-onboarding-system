@@ -1,5 +1,6 @@
 """Minimal HTTP boundary over the onboarding graph."""
 
+import asyncio
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, status
@@ -40,28 +41,34 @@ class OnboardingService:
         self._executor = OperationExecutor(SimulatedCompany())
         self._graph = build_onboarding_graph(executor=self._executor)
         self._states: dict[str, OnboardingState] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, onboarding_id: str) -> asyncio.Lock:
+        return self._locks.setdefault(onboarding_id, asyncio.Lock())
 
     async def start(self, request: OnboardingRequest) -> OnboardingSnapshot:
-        state = await self._graph.ainvoke({"request": request})
-        self._states[request.onboarding_id] = state
+        async with self._lock_for(request.onboarding_id):
+            state = await self._graph.ainvoke({"request": request})
+            self._states[request.onboarding_id] = state
         return self.snapshot(state)
 
     async def resume(
         self, onboarding_id: str, event: ResumeEvent
     ) -> OnboardingSnapshot:
-        state = self._states.get(onboarding_id)
-        if state is None:
-            raise KeyError(onboarding_id)
-        next_state = await self._graph.ainvoke(
-            {
-                "request": state["request"],
-                "context": state["context"],
-                "tasks": state.get("tasks", []),
-                "operations": state.get("operations", []),
-                "resume_event": event,
-            }
-        )
-        self._states[onboarding_id] = next_state
+        async with self._lock_for(onboarding_id):
+            state = self._states.get(onboarding_id)
+            if state is None:
+                raise KeyError(onboarding_id)
+            next_state = await self._graph.ainvoke(
+                {
+                    "request": state["request"],
+                    "context": state["context"],
+                    "tasks": state.get("tasks", []),
+                    "operations": state.get("operations", []),
+                    "resume_event": event,
+                }
+            )
+            self._states[onboarding_id] = next_state
         return self.snapshot(next_state)
 
     def get(self, onboarding_id: str) -> OnboardingSnapshot | None:

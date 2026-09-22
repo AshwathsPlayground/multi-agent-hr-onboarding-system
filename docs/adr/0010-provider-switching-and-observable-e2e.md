@@ -36,7 +36,14 @@ Pytest selection remains explicit:
 
 The live onboarding test uses the real model but keeps enterprise tools simulated.
 It asserts parseable structured outputs, expected agents, simulated effects, and
-valid business states rather than exact prose.
+valid business states rather than exact prose. Because live model guidance can
+legitimately choose input or escalation outcomes, live assertions use bounded
+invariants and effect upper bounds; deterministic offline tests own exact
+orchestration behavior.
+
+Model context and reviewer-facing event transcripts redact bank-detail and other
+credential-like fields. The live provider still receives the structured
+eligibility signal it needs, not the raw reference.
 
 ## Consequences
 
@@ -45,7 +52,8 @@ tool event, and then opt into a live provider run without changing graph code. T
 scripted adapter makes failure and resume scenarios deterministic. The live suite is
 slower and can vary in wording, so it is opt-in and invariant-based.
 
-The current model output is an observable structured assessment. Deterministic domain
-rules still produce the authoritative task proposals for this assignment slice. A
-future production integration may allow model outputs to contribute more directly to
-domain decisions, but it must preserve typed validation and the executor safety seam.
+The current model output is an observable structured assessment with bounded guidance
+for proceed, input requests, escalation, and optional candidate-task selection.
+Deterministic domain rules still produce the candidate tasks and remain authoritative
+for prerequisites, validation, and side effects. ADR-0011 records how model guidance
+is applied without allowing arbitrary model-generated writes.

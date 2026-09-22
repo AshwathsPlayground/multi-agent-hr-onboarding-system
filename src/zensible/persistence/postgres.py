@@ -8,6 +8,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from zensible.domain.contracts import (
     AgentContext,
+    AgentDecision,
     AgentName,
     ComplianceAssessment,
     ComplianceRequirement,
@@ -45,6 +46,7 @@ from zensible.domain.contracts import (
 from zensible.tools.operation_executor import OperationResult
 
 CHECKPOINT_TYPES = (
+    AgentDecision,
     AgentContext,
     AgentName,
     ComplianceAssessment,

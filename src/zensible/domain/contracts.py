@@ -39,6 +39,14 @@ class SpecialistOutcome(str, Enum):
     FAILED = "failed"
 
 
+class AgentDecision(str, Enum):
+    """Bounded model guidance that the deterministic agent can safely apply."""
+
+    PROCEED = "proceed"
+    REQUEST_INPUT = "request_input"
+    ESCALATE = "escalate"
+
+
 class OnboardingStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     COMPLETE = "complete"
@@ -284,12 +292,19 @@ class DeliveryResult(ContractModel):
 
 
 class ModelAssessment(ContractModel):
-    """Structured, observable output produced by an agent model."""
+    """Structured model guidance consumed by a specialist and its parent graph."""
 
     summary: str = Field(min_length=1)
     recommendation: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
     evidence: list[str] = Field(default_factory=list)
+    decision: AgentDecision = AgentDecision.PROCEED
+    # None means the model did not choose among the agent's candidates. An
+    # explicit list is validated against those candidates before it can affect
+    # task planning.
+    approved_task_ids: list[str] | None = None
+    requested_inputs: list[MissingInput] = Field(default_factory=list)
+    escalation_reasons: list[str] = Field(default_factory=list)
 
 
 PayloadT = TypeVar("PayloadT")
@@ -305,6 +320,7 @@ class SpecialistResult[PayloadT](ContractModel):
     missing_inputs: list[MissingInput] = Field(default_factory=list)
     conflicts: list[Conflict] = Field(default_factory=list)
     proposed_tasks: list[TaskProposal] = Field(default_factory=list)
+    deferred_tasks: list[TaskProposal] = Field(default_factory=list)
     effects: list[Effect] = Field(default_factory=list)
     notification_needs: list[NotificationNeed] = Field(default_factory=list)
     errors: list[ErrorDetail] = Field(default_factory=list)
@@ -314,6 +330,7 @@ class SpecialistResult[PayloadT](ContractModel):
 
 __all__ = [
     "AgentContext",
+    "AgentDecision",
     "AgentName",
     "ComplianceAssessment",
     "ComplianceRequirement",
