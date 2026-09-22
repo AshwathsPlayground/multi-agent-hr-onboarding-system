@@ -36,7 +36,14 @@ Pytest selection remains explicit:
 
 The live onboarding test uses the real model but keeps enterprise tools simulated.
 It asserts parseable structured outputs, expected agents, simulated effects, and
-valid business states rather than exact prose.
+valid business states rather than exact prose. Because live model guidance can
+legitimately choose input or escalation outcomes, live assertions use bounded
+invariants and effect upper bounds; deterministic offline tests own exact
+orchestration behavior.
+
+Model context and reviewer-facing event transcripts redact bank-detail and other
+credential-like fields. The live provider still receives the structured
+eligibility signal it needs, not the raw reference.
 
 ## Consequences
 

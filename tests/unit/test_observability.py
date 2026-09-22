@@ -117,7 +117,11 @@ def test_human_event_format_summarizes_context_and_keeps_agent_output_visible() 
                 "missing_inputs": [
                     {"field": "bank_details_reference", "reason": "required"}
                 ],
-                "payload": {"eligible": False, "compensation_reference": "comp_123"},
+                "payload": {
+                    "eligible": True,
+                    "compensation_reference": "comp_123",
+                    "bank_details_reference": "bank_ref_123",
+                },
             }
         },
     )
@@ -131,4 +135,6 @@ def test_human_event_format_summarizes_context_and_keeps_agent_output_visible() 
     assert "Decision: request_input" in rendered
     assert "Requested inputs: payroll_confirmation — required" in rendered
     assert "Missing input: bank_details_reference — required" in rendered
+    assert "bank_ref_123" not in rendered
+    assert "bank_details_reference=[REDACTED]" in rendered
     assert "validated_hr_facts" not in rendered

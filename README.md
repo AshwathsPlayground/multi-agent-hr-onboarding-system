@@ -84,6 +84,9 @@ The `-s` flag shows printed transcripts. Live tests call the configured model;
 their tools remain simulated and assertions check stable business outcomes rather
 than exact natural-language wording.
 
+Pull requests run the offline suite, Ruff, and PostgreSQL checkpoint tests in
+GitHub Actions. Live-provider tests remain opt-in because they require credentials.
+
 ## Where to look
 
 - `src/zensible/domain/`: typed business contracts and graph state.

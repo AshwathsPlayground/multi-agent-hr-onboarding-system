@@ -4,7 +4,11 @@ import pytest
 
 from zensible.agents import hr, payroll
 from zensible.config import Settings
-from zensible.domain.contracts import AgentContext, OnboardingRequest, SpecialistOutcome
+from zensible.domain.contracts import (
+    AgentContext,
+    OnboardingRequest,
+    SpecialistOutcome,
+)
 from zensible.modeling import LangChainStructuredAgentModel
 from zensible.observability import RecordingEventSink, render_events
 
@@ -60,7 +64,10 @@ async def test_live_payroll_preserves_missing_bank_details() -> None:
     )
     print(render_events(events.events))
 
-    assert result.outcome is SpecialistOutcome.COMPLETED
+    assert result.outcome in {
+        SpecialistOutcome.COMPLETED,
+        SpecialistOutcome.NEEDS_RESOLUTION,
+    }
     assert result.missing_inputs[0].field == "bank_details_reference"
     assert result.proposed_tasks == []
     assert result.model_output is not None

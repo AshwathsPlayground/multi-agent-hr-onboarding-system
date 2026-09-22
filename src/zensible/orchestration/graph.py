@@ -1,6 +1,9 @@
 """Parent LangGraph for deterministic, production-shaped onboarding runs."""
 
 import asyncio
+import hashlib
+import json
+from collections.abc import Mapping
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -55,6 +58,49 @@ def _context_for(state: OnboardingState) -> AgentContext:
     )
 
 
+def _result_errors(result: SpecialistResult[Any]) -> list[ErrorDetail]:
+    errors = list(result.errors)
+    errors.extend(
+        ErrorDetail(code="missing_input", message=missing.reason)
+        for missing in result.missing_inputs
+    )
+    errors.extend(
+        ErrorDetail(code="conflict", message=conflict.field)
+        for conflict in result.conflicts
+    )
+    return errors
+
+
+def _input_fingerprint(state: OnboardingState) -> str:
+    context = state["context"]
+    material = {
+        "resume_event": (
+            context.resume_event.model_dump(mode="json")
+            if context.resume_event is not None
+            else None
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _notification_operation_key(state: OnboardingState) -> str:
+    context = state["context"]
+    event_material = (
+        context.resume_event.model_dump(mode="json")
+        if context.resume_event is not None
+        else {"kind": "initial"}
+    )
+    event_fingerprint = hashlib.sha256(
+        json.dumps(event_material, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:16]
+    return (
+        f"{context.onboarding_id}:notification:{state['status'].value}:"
+        f"{event_fingerprint}"
+    )
+
+
 def _prepare(state: OnboardingState) -> dict[str, Any]:
     return {
         "context": _context_for(state),
@@ -74,6 +120,7 @@ async def _run_hr(state: OnboardingState, graph) -> dict[str, Any]:
     findings[AgentName.HR.value] = result.findings
     return {
         "assessment_results": {"hr": result},
+        "errors": _result_errors(result),
         "context": context.model_copy(
             update={
                 "validated_hr_facts": validated_facts,
@@ -132,15 +179,32 @@ def _task_from_proposal(
     proposal: TaskProposal,
     existing: TaskRecord | None,
     results: dict[str, SpecialistResult[Any]],
+    task_records: Mapping[str, TaskRecord] | None = None,
 ) -> TaskRecord:
     if existing is not None and existing.status is TaskStatus.SUCCEEDED:
+        return existing
+    if existing is not None and existing.status is TaskStatus.FAILED:
         return existing
     ready = all(
         _requirement_satisfied(requirement, results)
         for requirement in proposal.required_requirements
     )
+    records = task_records or {}
+    unmet_dependencies = [
+        dependency
+        for dependency in proposal.depends_on
+        if records.get(dependency) is None
+        or records[dependency].status is not TaskStatus.SUCCEEDED
+    ]
+    if unmet_dependencies:
+        ready = False
     status = TaskStatus.READY if ready else TaskStatus.BLOCKED
-    return TaskRecord(**proposal.model_dump(), status=status)
+    block_reason = (
+        f"dependencies not succeeded: {', '.join(unmet_dependencies)}"
+        if unmet_dependencies
+        else None
+    )
+    return TaskRecord(**proposal.model_dump(), status=status, block_reason=block_reason)
 
 
 def _deferred_task_from_proposal(
@@ -148,10 +212,11 @@ def _deferred_task_from_proposal(
     existing: TaskRecord | None,
     results: dict[str, SpecialistResult[Any]],
     reason: str,
+    task_records: Mapping[str, TaskRecord] | None = None,
 ) -> TaskRecord:
     """Keep model-deferred work visible instead of silently dropping it."""
 
-    task = _task_from_proposal(proposal, existing, results)
+    task = _task_from_proposal(proposal, existing, results, task_records)
     if task.status is TaskStatus.SUCCEEDED:
         return task
     return task.model_copy(
@@ -161,7 +226,9 @@ def _deferred_task_from_proposal(
                 if task.status is TaskStatus.READY
                 else task.status
             ),
-            "block_reason": reason,
+            "block_reason": "; ".join(
+                item for item in (reason, task.block_reason) if item
+            ),
         }
     )
 
@@ -182,6 +249,12 @@ def _plan_tasks(state: OnboardingState) -> dict[str, Any]:
         known_task_ids=set(existing_by_id),
     )
     tasks_by_id = dict(existing_by_id)
+    candidate_records = dict(existing_by_id)
+    for proposal in proposals:
+        if proposal.task_id not in invalid_ids:
+            candidate_records[proposal.task_id] = TaskRecord(
+                **proposal.model_dump(), status=TaskStatus.PENDING
+            )
     for proposal in active_proposals:
         if proposal.task_id in invalid_ids:
             continue
@@ -189,7 +262,9 @@ def _plan_tasks(state: OnboardingState) -> dict[str, Any]:
             proposal,
             existing_by_id.get(proposal.task_id),
             results,
+            candidate_records,
         )
+        candidate_records[proposal.task_id] = tasks_by_id[proposal.task_id]
     for result in results.values():
         reason = (
             result.model_output.recommendation
@@ -204,7 +279,9 @@ def _plan_tasks(state: OnboardingState) -> dict[str, Any]:
                 existing_by_id.get(proposal.task_id),
                 results,
                 reason,
+                candidate_records,
             )
+            candidate_records[proposal.task_id] = tasks_by_id[proposal.task_id]
     errors = [*plan_errors]
     errors.extend(error for result in results.values() for error in result.errors)
     errors.extend(
@@ -235,20 +312,54 @@ async def _execute_actions(
     operations_by_key = {
         operation.operation_key: operation for operation in state.get("operations", [])
     }
+    task_records = {task.task_id: task for task in state.get("tasks", [])}
+    prepared_tasks: list[TaskRecord] = []
+    for task in state.get("tasks", []):
+        if task.status is not TaskStatus.READY:
+            prepared_tasks.append(task)
+            continue
+        unmet_dependencies = [
+            dependency
+            for dependency in task.depends_on
+            if task_records.get(dependency) is None
+            or task_records[dependency].status is not TaskStatus.SUCCEEDED
+        ]
+        if unmet_dependencies:
+            prepared_tasks.append(
+                task.model_copy(
+                    update={
+                        "status": TaskStatus.BLOCKED,
+                        "block_reason": (
+                            "dependencies not succeeded: "
+                            + ", ".join(unmet_dependencies)
+                        ),
+                    }
+                )
+            )
+        else:
+            prepared_tasks.append(task)
     ready_tasks = [
         task
-        for task in state.get("tasks", [])
+        for task in prepared_tasks
         if task.status is TaskStatus.READY
         and task.intent is not TaskIntent.DELIVER_NOTIFICATION
     ]
 
     def request_for(task: TaskRecord) -> OperationRequest:
-        operation_key = task.operation_key or f"{task.task_id}:operation"
+        input_fingerprint = _input_fingerprint(state)
+        operation_key = (
+            f"{task.operation_key or f'{task.task_id}:operation'}:"
+            f"{input_fingerprint[:16]}"
+        )
         return OperationRequest(
             operation_key=operation_key,
             task_id=task.task_id,
             operation_type=_operation_type(task.intent),
-            payload={"task_id": task.task_id, "goal": task.goal},
+            payload={
+                "task_id": task.task_id,
+                "goal": task.goal,
+                "input_fingerprint": input_fingerprint,
+            },
         )
 
     results = await asyncio.gather(
@@ -261,7 +372,7 @@ async def _execute_actions(
         zip((task.task_id for task in ready_tasks), results, strict=True)
     )
     updated_tasks: list[TaskRecord] = []
-    for task in state.get("tasks", []):
+    for task in prepared_tasks:
         if (
             task.status is not TaskStatus.READY
             or task.intent is TaskIntent.DELIVER_NOTIFICATION
@@ -332,8 +443,40 @@ async def _communicate(
     state: OnboardingState, graph, executor: OperationExecutor
 ) -> dict[str, Any]:
     result = (await graph.ainvoke({"context": state["context"]}))["result"]
+    current_status = state["status"]
+    communication_errors = list(state.get("errors", []))
+    communication_errors.extend(_result_errors(result))
+    blocked = (
+        bool(result.errors) or result.outcome is SpecialistOutcome.NEEDS_RESOLUTION
+    )
+    waiting = (
+        bool(result.missing_inputs) or result.outcome is SpecialistOutcome.NEEDS_INPUT
+    )
+    if blocked or waiting:
+        status = current_status
+        if current_status not in {
+            OnboardingStatus.INVALID_PLAN,
+            OnboardingStatus.BLOCKED_BY_FAILURE,
+        }:
+            status = (
+                OnboardingStatus.NEEDS_RESOLUTION
+                if blocked
+                else OnboardingStatus.WAITING_FOR_INPUT
+            )
+        notification = result.model_copy(
+            update={
+                "payload": result.payload.model_copy(
+                    update={"status": DeliveryStatus.NEEDS_RESOLUTION}
+                )
+            }
+        )
+        return {
+            "status": status,
+            "errors": communication_errors,
+            "notifications": [notification],
+        }
     request = OperationRequest(
-        operation_key=f"{state['context'].onboarding_id}:notification:{state['status'].value}",
+        operation_key=_notification_operation_key(state),
         task_id=f"{state['context'].onboarding_id}:notification",
         operation_type="deliver_notification",
         payload={
@@ -353,6 +496,7 @@ async def _communicate(
     }
     operations[delivery.operation.operation_key] = delivery.operation
     return {
+        "errors": communication_errors,
         "notifications": [
             result.model_copy(
                 update={

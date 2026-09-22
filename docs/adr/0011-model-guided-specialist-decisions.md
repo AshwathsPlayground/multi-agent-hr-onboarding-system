@@ -39,7 +39,10 @@ blocked until their requirements are satisfied.
 The parent graph remains authoritative for schema validation, cross-agent
 dependencies, state revisions, operation identity, idempotency, and side effects.
 Model guidance cannot make an ineligible task ready or bypass a required
-requirement.
+requirement. Communication is subject to the same boundary: an input request or
+escalation produces a visible deferred notification and never calls the delivery
+tool. Provider or structured-output failures are converted to an escalation
+outcome so the graph can checkpoint a safe resolution state.
 
 ## Consequences
 

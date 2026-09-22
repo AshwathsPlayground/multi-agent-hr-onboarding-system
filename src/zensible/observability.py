@@ -20,6 +20,16 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_SENSITIVE_FIELD_MARKERS = (
+    "bank_details",
+    "account_number",
+    "routing_number",
+    "ssn",
+    "tax_id",
+    "secret",
+    "token",
+    "api_key",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +62,9 @@ class RecordingEventSink:
         name: str,
         payload: Mapping[str, JsonValue] | None = None,
     ) -> None:
+        safe_payload = _redact_value(dict(payload or {}))
         self.events.append(
-            ExecutionEvent(kind=kind, name=name, payload=dict(payload or {}))
+            ExecutionEvent(kind=kind, name=name, payload=dict(safe_payload))
         )
 
 
@@ -84,6 +95,21 @@ def render_events(events: Sequence[ExecutionEvent]) -> str:
 
 def _mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _redact_value(value: object, *, field_name: str | None = None) -> object:
+    if field_name is not None and any(
+        marker in field_name.lower() for marker in _SENSITIVE_FIELD_MARKERS
+    ):
+        return "[REDACTED]"
+    if isinstance(value, Mapping):
+        return {
+            str(key): _redact_value(item, field_name=str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    return value
 
 
 def _mappings(value: object) -> list[Mapping[str, object]]:
@@ -283,8 +309,16 @@ def _delivery_payload(payload: Mapping[str, object]) -> list[str]:
 
 def _pairs(payload: Mapping[str, object], keys: Sequence[str]) -> str:
     return "; ".join(
-        f"{key}={payload.get(key)}" for key in keys if payload.get(key) is not None
+        f"{key}={_display_value(key, payload.get(key))}"
+        for key in keys
+        if payload.get(key) is not None
     )
+
+
+def _display_value(key: str, value: object) -> object:
+    if any(marker in key.lower() for marker in _SENSITIVE_FIELD_MARKERS):
+        return "[REDACTED]"
+    return value
 
 
 def _format_model_request(event: ExecutionEvent) -> str:

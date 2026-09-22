@@ -290,6 +290,24 @@ async def test_payroll_agent_handles_bank_detail_variants(
 
 
 @pytest.mark.asyncio
+async def test_model_context_redacts_bank_details_reference() -> None:
+    resume_event = ResumeEvent(
+        kind=ResumeEventKind.BANK_DETAILS_SUBMITTED,
+        payload={"bank_details_reference": "bank_ref_123"},
+        source="employee:emp_123",
+        submitted_at=datetime(2026, 9, 22, tzinfo=UTC),
+    )
+    model = model_for(AgentName.PAYROLL)
+
+    await payroll.assess(
+        context(resume_event=resume_event), state_revision=0, model=model
+    )
+
+    assert "bank_ref_123" not in model.calls[0].user_input
+    assert "[REDACTED]" in model.calls[0].user_input
+
+
+@pytest.mark.asyncio
 async def test_communication_agent_returns_pending_delivery() -> None:
     graph = communication.build_graph(model_for(AgentName.COMMUNICATION))
 

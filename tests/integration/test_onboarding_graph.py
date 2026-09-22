@@ -156,6 +156,54 @@ def test_model_escalation_changes_parent_status_and_suppresses_agent_action() ->
     assert any(error.code == "model_escalation" for error in state["errors"])
 
 
+def test_communication_escalation_suppresses_notification_delivery() -> None:
+    company = SimulatedCompany()
+    responses = {
+        agent.value: ModelAssessment(
+            summary=f"{agent.value} reviewed",
+            recommendation="continue",
+            confidence=0.9,
+        )
+        for agent in AgentName
+    }
+    responses[AgentName.COMMUNICATION.value] = ModelAssessment(
+        summary="notification requires review",
+        recommendation="do not notify until HR confirms the recipients",
+        confidence=0.95,
+        decision=AgentDecision.ESCALATE,
+        escalation_reasons=["recipient list needs human confirmation"],
+    )
+    graph = build_onboarding_graph(
+        executor=OperationExecutor(company),
+        agent_model=ScriptedStructuredAgentModel(responses),
+    )
+
+    state = asyncio.run(graph.ainvoke({"request": john_request()}))
+
+    assert state["status"] is OnboardingStatus.NEEDS_RESOLUTION
+    assert company.effect_count("deliver_notification") == 0
+    assert any(error.code == "model_escalation" for error in state["errors"])
+
+
+class _FailingModel:
+    async def ainvoke(self, **_kwargs):
+        raise TimeoutError("model provider timed out")
+
+
+def test_model_provider_failure_becomes_resolution_state() -> None:
+    company = SimulatedCompany()
+    graph = build_onboarding_graph(
+        executor=OperationExecutor(company),
+        agent_model=_FailingModel(),
+    )
+
+    state = asyncio.run(graph.ainvoke({"request": john_request()}))
+
+    assert state["status"] is OnboardingStatus.NEEDS_RESOLUTION
+    assert company.effect_count("submit_it_request") == 0
+    assert any(error.code == "model_escalation" for error in state["errors"])
+
+
 def test_model_task_selection_controls_parent_action_batch() -> None:
     company = SimulatedCompany()
     responses = {
