@@ -320,6 +320,7 @@ class SpecialistResult[PayloadT](ContractModel):
     missing_inputs: list[MissingInput] = Field(default_factory=list)
     conflicts: list[Conflict] = Field(default_factory=list)
     proposed_tasks: list[TaskProposal] = Field(default_factory=list)
+    deferred_tasks: list[TaskProposal] = Field(default_factory=list)
     effects: list[Effect] = Field(default_factory=list)
     notification_needs: list[NotificationNeed] = Field(default_factory=list)
     errors: list[ErrorDetail] = Field(default_factory=list)

@@ -19,15 +19,22 @@ bypass prerequisites, or perform side effects directly.
 Extend `ModelAssessment` with bounded guidance:
 
 - `decision=proceed`: continue with eligible deterministic work.
-- `decision=request_input`: add structured requested inputs and prevent proposed
-  writes for that specialist.
+- `decision=request_input`: add structured requested inputs. If the model also
+  supplies `approved_task_ids`, safe independent candidates may proceed while
+  the remaining candidates are deferred; without an explicit approval list, all
+  proposed work is deferred for that specialist.
 - `decision=escalate`: produce an explicit resolution outcome and prevent proposed
   writes for that specialist.
 - `approved_task_ids`: optionally select from deterministic candidate task IDs.
 
 The specialist supplies candidate IDs to the model. The shared runtime validates
 any selected IDs against that allowlist and filters proposals accordingly. Unknown
-IDs are invalid model output and result in a safe resolution state.
+IDs are invalid model output and result in a safe resolution state. Candidates
+that are omitted from an explicit approval list are retained as visible deferred
+tasks rather than being dropped. A ready deferred task becomes
+`needs_resolution`, so a model cannot silently suppress required work and allow
+the onboarding to complete. Deterministic prerequisite-blocked tasks remain
+blocked until their requirements are satisfied.
 
 The parent graph remains authoritative for schema validation, cross-agent
 dependencies, state revisions, operation identity, idempotency, and side effects.

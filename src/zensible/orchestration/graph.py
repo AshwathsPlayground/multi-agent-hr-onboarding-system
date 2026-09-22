@@ -143,19 +143,46 @@ def _task_from_proposal(
     return TaskRecord(**proposal.model_dump(), status=status)
 
 
+def _deferred_task_from_proposal(
+    proposal: TaskProposal,
+    existing: TaskRecord | None,
+    results: dict[str, SpecialistResult[Any]],
+    reason: str,
+) -> TaskRecord:
+    """Keep model-deferred work visible instead of silently dropping it."""
+
+    task = _task_from_proposal(proposal, existing, results)
+    if task.status is TaskStatus.SUCCEEDED:
+        return task
+    return task.model_copy(
+        update={
+            "status": (
+                TaskStatus.NEEDS_RESOLUTION
+                if task.status is TaskStatus.READY
+                else task.status
+            ),
+            "block_reason": reason,
+        }
+    )
+
+
 def _plan_tasks(state: OnboardingState) -> dict[str, Any]:
     results = state["assessment_results"]
     existing_by_id = {task.task_id: task for task in state.get("tasks", [])}
-    proposals = [
+    active_proposals = [
         proposal for result in results.values() for proposal in result.proposed_tasks
     ]
+    deferred_proposals = [
+        proposal for result in results.values() for proposal in result.deferred_tasks
+    ]
+    proposals = [proposal for proposal in [*active_proposals, *deferred_proposals]]
     invalid_ids, plan_errors = validate_task_proposals(
         proposals,
         current_revision=state["context"].state_revision,
         known_task_ids=set(existing_by_id),
     )
     tasks_by_id = dict(existing_by_id)
-    for proposal in proposals:
+    for proposal in active_proposals:
         if proposal.task_id in invalid_ids:
             continue
         tasks_by_id[proposal.task_id] = _task_from_proposal(
@@ -163,6 +190,21 @@ def _plan_tasks(state: OnboardingState) -> dict[str, Any]:
             existing_by_id.get(proposal.task_id),
             results,
         )
+    for result in results.values():
+        reason = (
+            result.model_output.recommendation
+            if result.model_output is not None
+            else "task was deferred by specialist guidance"
+        )
+        for proposal in result.deferred_tasks:
+            if proposal.task_id in invalid_ids:
+                continue
+            tasks_by_id[proposal.task_id] = _deferred_task_from_proposal(
+                proposal,
+                existing_by_id.get(proposal.task_id),
+                results,
+                reason,
+            )
     errors = [*plan_errors]
     errors.extend(error for result in results.values() for error in result.errors)
     errors.extend(
@@ -272,6 +314,10 @@ def _classify(state: OnboardingState) -> dict[str, Any]:
         status = OnboardingStatus.BLOCKED_BY_FAILURE
     elif any(error.code == "missing_input" for error in state.get("errors", [])):
         status = OnboardingStatus.WAITING_FOR_INPUT
+    elif any(
+        task.status is TaskStatus.NEEDS_RESOLUTION for task in state.get("tasks", [])
+    ):
+        status = OnboardingStatus.NEEDS_RESOLUTION
     elif any(
         task.status in {TaskStatus.BLOCKED, TaskStatus.WAITING}
         for task in state.get("tasks", [])

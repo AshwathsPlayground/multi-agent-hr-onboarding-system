@@ -204,15 +204,25 @@ def _error_lines(result: Mapping[str, object]) -> list[str]:
 
 def _task_lines(result: Mapping[str, object]) -> list[str]:
     tasks = _mappings(result.get("proposed_tasks"))
-    if not tasks:
-        return []
-    return [
-        "  Proposed tasks: "
-        + "; ".join(
-            f"{task.get('intent', 'n/a')} ({task.get('task_id', 'n/a')})"
-            for task in tasks
+    deferred_tasks = _mappings(result.get("deferred_tasks"))
+    lines: list[str] = []
+    if tasks:
+        lines.append(
+            "  Proposed tasks: "
+            + "; ".join(
+                f"{task.get('intent', 'n/a')} ({task.get('task_id', 'n/a')})"
+                for task in tasks
+            )
         )
-    ]
+    if deferred_tasks:
+        lines.append(
+            "  Deferred tasks: "
+            + "; ".join(
+                f"{task.get('intent', 'n/a')} ({task.get('task_id', 'n/a')})"
+                for task in deferred_tasks
+            )
+        )
+    return lines
 
 
 def _payload_lines(payload: Mapping[str, object]) -> list[str]:

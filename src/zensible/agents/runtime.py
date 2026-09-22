@@ -1,7 +1,7 @@
 """Shared runtime helper for observable specialist model calls."""
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from zensible.domain.contracts import (
@@ -40,7 +40,9 @@ async def model_assessment(
             "authoritative information is missing, or decision=escalate when human "
             "review is required. If candidate_task_ids are supplied, approved_task_ids "
             "must contain only candidate IDs you recommend; use null when you do not "
-            "need to choose tasks. Treat deterministic_* fields in the context as "
+            "need to choose tasks. A request_input decision may approve safe "
+            "independent candidates while deferring work that needs the requested "
+            "input. Treat deterministic_* fields in the context as "
             "authoritative domain validation; do not add requirements solely because "
             "a source field or candidate list is not included. Do not invent facts "
             "or perform side effects."
@@ -64,9 +66,15 @@ def apply_model_guidance(
     errors = list(result.errors)
     missing_inputs = list(result.missing_inputs)
     proposed_tasks = list(result.proposed_tasks)
+    deferred_tasks = list(result.deferred_tasks)
     outcome = result.outcome
 
+    def defer(tasks: Iterable[Any]) -> None:
+        known_ids = {task.task_id for task in deferred_tasks}
+        deferred_tasks.extend(task for task in tasks if task.task_id not in known_ids)
+
     if model_output.approved_task_ids is not None:
+        candidate_tasks = list(proposed_tasks)
         approved = set(model_output.approved_task_ids)
         candidates = set(candidate_task_ids)
         unknown = approved - candidates
@@ -80,11 +88,13 @@ def apply_model_guidance(
                     ),
                 )
             )
+            defer(candidate_tasks)
             proposed_tasks = []
             outcome = SpecialistOutcome.NEEDS_RESOLUTION
         else:
+            defer(task for task in candidate_tasks if task.task_id not in approved)
             proposed_tasks = [
-                task for task in proposed_tasks if task.task_id in approved
+                task for task in candidate_tasks if task.task_id in approved
             ]
 
     if model_output.decision is AgentDecision.REQUEST_INPUT:
@@ -102,7 +112,9 @@ def apply_model_guidance(
             for item in requested_inputs
             if (item.field, item.reason) not in known_inputs
         )
-        proposed_tasks = []
+        if model_output.approved_task_ids is None:
+            defer(proposed_tasks)
+            proposed_tasks = []
         if not had_domain_missing_inputs and outcome not in {
             SpecialistOutcome.NEEDS_RESOLUTION,
             SpecialistOutcome.FAILED,
@@ -114,6 +126,7 @@ def apply_model_guidance(
         errors.extend(
             ErrorDetail(code="model_escalation", message=reason) for reason in reasons
         )
+        defer(proposed_tasks)
         proposed_tasks = []
         outcome = SpecialistOutcome.NEEDS_RESOLUTION
 
@@ -123,6 +136,7 @@ def apply_model_guidance(
             "errors": errors,
             "missing_inputs": missing_inputs,
             "proposed_tasks": proposed_tasks,
+            "deferred_tasks": deferred_tasks,
             "model_output": model_output,
         }
     )

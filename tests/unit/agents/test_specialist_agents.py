@@ -162,6 +162,36 @@ async def test_payroll_model_request_for_input_suppresses_ready_task() -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_request_for_input_preserves_approved_independent_task() -> None:
+    model = ScriptedStructuredAgentModel(
+        {
+            AgentName.IT.value: ModelAssessment(
+                summary="laptop is safe, AWS needs training evidence",
+                recommendation="request the laptop and verify training before AWS",
+                confidence=0.95,
+                decision=AgentDecision.REQUEST_INPUT,
+                approved_task_ids=["onb_agent_test:it:laptop"],
+                requested_inputs=[
+                    MissingInput(
+                        field="security_training_verified",
+                        reason="AWS access requires verified training",
+                        requested_from="it",
+                    )
+                ],
+            )
+        }
+    )
+    graph = it.build_graph(model)
+
+    result = (await graph.ainvoke({"context": context()}))["result"]
+
+    assert result.proposed_tasks[0].task_id == "onb_agent_test:it:laptop"
+    assert [task.task_id for task in result.deferred_tasks] == ["onb_agent_test:it:aws"]
+    assert result.outcome is SpecialistOutcome.NEEDS_INPUT
+    assert result.missing_inputs[0].field == "security_training_verified"
+
+
+@pytest.mark.asyncio
 async def test_invalid_model_task_selection_is_rejected_before_planning() -> None:
     model = ScriptedStructuredAgentModel(
         {

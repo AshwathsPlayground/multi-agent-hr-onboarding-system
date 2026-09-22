@@ -181,8 +181,73 @@ def test_model_task_selection_controls_parent_action_batch() -> None:
     state = asyncio.run(graph.ainvoke({"request": john_request()}))
 
     assert company.effect_count("submit_it_request") == 1
-    assert {
-        task.task_id
+    it_tasks = {
+        task.task_id: task
         for task in state["tasks"]
         if task.intent.value == "submit_it_request"
-    } == {"onb_123:it:laptop"}
+    }
+    assert set(it_tasks) == {"onb_123:it:laptop", "onb_123:it:aws"}
+    assert it_tasks["onb_123:it:laptop"].status is TaskStatus.SUCCEEDED
+    assert it_tasks["onb_123:it:aws"].status is TaskStatus.BLOCKED
+
+
+def test_model_cannot_silently_skip_ready_required_tasks() -> None:
+    company = SimulatedCompany()
+    responses = {
+        agent.value: ModelAssessment(
+            summary=f"{agent.value} reviewed",
+            recommendation="continue",
+            confidence=0.9,
+        )
+        for agent in AgentName
+    }
+    responses[AgentName.IT.value] = ModelAssessment(
+        summary="no IT work approved",
+        recommendation="defer IT work",
+        confidence=0.8,
+        decision=AgentDecision.PROCEED,
+        approved_task_ids=[],
+    )
+    responses[AgentName.COMPLIANCE.value] = ModelAssessment(
+        summary="compliance case approved",
+        recommendation="open the case",
+        confidence=0.9,
+        approved_task_ids=["onb_123:compliance:case"],
+    )
+    responses[AgentName.PAYROLL.value] = ModelAssessment(
+        summary="payroll setup approved",
+        recommendation="submit payroll setup",
+        confidence=0.9,
+        approved_task_ids=["onb_123:payroll:setup"],
+    )
+    graph = build_onboarding_graph(
+        executor=OperationExecutor(company),
+        agent_model=ScriptedStructuredAgentModel(responses),
+    )
+
+    first = asyncio.run(graph.ainvoke({"request": john_request()}))
+    resume_event = ResumeEvent(
+        kind=ResumeEventKind.TRAINING_EVIDENCE_SUBMITTED,
+        payload={"status": "verified", "bank_details_reference": "bank_ref_123"},
+        source="hr_user_42",
+        submitted_at=datetime(2026, 9, 22, 10, 30, tzinfo=UTC),
+    )
+    resumed = asyncio.run(
+        graph.ainvoke(
+            {
+                "request": john_request(),
+                "context": first["context"],
+                "tasks": first["tasks"],
+                "operations": first["operations"],
+                "resume_event": resume_event,
+            }
+        )
+    )
+
+    assert resumed["status"] is OnboardingStatus.NEEDS_RESOLUTION
+    assert {
+        task.task_id
+        for task in resumed["tasks"]
+        if task.status is TaskStatus.NEEDS_RESOLUTION
+    } == {"onb_123:it:laptop", "onb_123:it:aws"}
+    assert company.effect_count("submit_it_request") == 0
